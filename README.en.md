@@ -1,45 +1,20 @@
-﻿# agent-paper-reviewers (English)
+﻿# agent-paper-reviewers
 
-`agent-paper-reviewers` is a pre-submission reviewer simulator using **Skill-driven flow + MCP-provided tool capabilities**.
+[中文](README.md) | English
 
-## Documentation
-- Output artifact guide: `OUTPUT_FILES.en.md`
-- Chinese output artifact guide: `OUTPUT_FILES.zh.md`
-- Chinese README: `README.zh.md`
-- Skill flow config: `agent-paper-reviewers-skill/flow_config.yaml`
-
-## Architecture
-- Skill-driven flow: pipeline order is loaded from `agent-paper-reviewers-skill/flow_config.yaml`.
-- MCP capability layer: tool capabilities (for example OpenReview policy resolution) are provided through `agent_paper_reviewers.mcp` providers.
-- Executor layer: LLM/agent backends are still plugged via `ExecutorAdapter`.
+`agent-paper-reviewers` is a pre-submission reviewer simulator for rejection-risk rehearsal, powered by **Skill-driven workflow + MCP-provided tool capabilities**.
 
 ## What it does
-- Parses paper drafts (`pdf` / `md`)
-- Aligns claims with evidence
-- Detects gaps (baseline / significance / ablation / error analysis)
-- Ranks reject risks (`P0/P1/P2`)
-- Generates remediation plan and rebuttal draft
-- Exports `MD + JSON + PDF`
+Given a paper draft (PDF/Markdown), venue+year, core claims, and resource constraints, it outputs:
+- scoring across reviewer dimensions
+- ranked rejection risks (P0/P1/P2)
+- must-do remediation experiments
+- rebuttal draft templates
 
-## Runtime options
-- `language_mode`: `en` | `en_zh`
-- `executor_backend`: `codex|agent_api|openai|anthropic|qwen|local_vllm`
-- `mcp_backend`: `http|disabled`
-- `always_export_pdf`: `true|false`
-
-## Output location
-Outputs are always written to:
-
-```text
-output/<paper_title>/
-```
-
-The folder is replaced on each run for the same paper title.
-
-## Encoding and PDF readability
-- Markdown and JSON are written in UTF-8.
-- PDF is generated via `pandoc` with engine fallback: `xelatex -> lualatex -> tectonic`.
-- Chinese PDF rendering quality depends on available CJK fonts (default is `Microsoft YaHei` in this project).
+## Architecture
+- Skill layer: workflow and policy sequencing from `agent-paper-reviewers-skill/flow_config.yaml`
+- MCP layer: concrete tool capabilities (e.g., OpenReview policy resolution)
+- Executor layer: model/agent backend execution (`codex/openai/anthropic/qwen/local_vllm`)
 
 ## Quick start
 ```bash
@@ -47,8 +22,43 @@ python -m agent_paper_reviewers.cli doctor
 python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output
 ```
 
-## Main commands
-- `doctor`: dependency check (`pandoc`, LaTeX engines, conda)
-- `run`: execute the configured Skill pipeline
-- `refresh-venue`: append monthly venue policy refresh reminder
+## Output directory
+All artifacts are written to:
 
+```text
+output/<paper_title>/
+```
+
+The same paper title will overwrite the folder on rerun.
+
+## Output artifacts
+### Core reports
+- `decision_brief.en.md/json/pdf`: short submission decision brief
+- `full_review.en.md/json/pdf`: full review report with detailed risks
+- `rebuttal.en.md/json/pdf`: rebuttal draft package
+
+With `language_mode=en_zh`, mirrored Chinese files are also produced:
+- `decision_brief.zh.md/json/pdf`
+- `full_review.zh.md/json/pdf`
+- `rebuttal.zh.md/json/pdf`
+
+### Structured and debug files
+- `claim_evidence_matrix.json`: claim-evidence anchors
+- `remediation_plan.json`: prioritized remediation tasks
+- `venue_profile_used.json`: resolved venue/year policy snapshot
+- `skill_flow_used.json`: resolved skill workflow used in the run
+- `mcp_runtime.json`: MCP backend/provider and capability switches
+- `run_summary.json`: run status summary
+- `run_result.json`: detailed run status object
+- `artifacts/`: intermediate pipeline artifacts
+
+## Status semantics
+- `success`: all configured outputs generated
+- `partial_failed`: primary outputs generated, optional parts failed
+- `failed`: pipeline failed before core deliverables were completed
+
+## References
+- Skill doc: `agent-paper-reviewers-skill/SKILL.md`
+- Skill flow: `agent-paper-reviewers-skill/flow_config.yaml`
+- Product spec: `docs/product-spec.md`
+- Input schema: `docs/output-schema.json`
