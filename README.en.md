@@ -2,63 +2,122 @@
 
 [中文](README.md) | English
 
-`agent-paper-reviewers` is a pre-submission reviewer simulator for rejection-risk rehearsal, powered by **Skill-driven workflow + MCP-provided tool capabilities**.
+I built this project for one practical reason: before submission, I want to run a strict rejection rehearsal instead of waiting passively for reviewer feedback.
 
-## What it does
-Given a paper draft (PDF/Markdown), venue+year, core claims, and resource constraints, it outputs:
-- scoring across reviewer dimensions
-- ranked rejection risks (P0/P1/P2)
-- must-do remediation experiments
-- rebuttal draft templates
+`agent-paper-reviewers` simulates a strict reviewer perspective and produces actionable fixes before you submit.
+
+## Why this project
+- Convert “unknown rejection risk” into a visible, ranked risk list.
+- Move from vague advice to executable remediation tasks.
+- Keep the workflow reusable and backend-agnostic.
+
+## What it can do
+- Parse paper drafts (`pdf` / `md`) into structured sections.
+- Run claim-evidence alignment checks.
+- Detect common missing checks: baseline, significance, ablation, error analysis, reproducibility.
+- Rank rejection risks (P0/P1/P2).
+- Generate prioritized remediation plans.
+- Draft rebuttal responses per reviewer concern.
+- Export single-language or bilingual artifacts (`en` / `en_zh`).
 
 ## Architecture
-- Skill layer: workflow and policy sequencing from `agent-paper-reviewers-skill/flow_config.yaml`
-- MCP layer: concrete tool capabilities (e.g., OpenReview policy resolution)
-- Executor layer: model/agent backend execution (`codex/openai/anthropic/qwen/local_vllm`)
+- Skill-driven flow: ordered by `agent-paper-reviewers-skill/flow_config.yaml`.
+- MCP capabilities: concrete tool capabilities are injected via MCP providers.
+- Pluggable executors: `codex|agent_api|openai|anthropic|qwen|local_vllm`.
+
+## Requirements
+- OS: Windows or Linux (Linux + CUDA 12.1 recommended for GPU inference).
+- Python: `3.11.x`.
+- Package manager: Conda.
+- PDF export: `pandoc` + (`xelatex` or `lualatex` or `tectonic`).
+- Optional network access: OpenReview dynamic policy resolve and online translation fallback.
+
+## Installation
+### 1. Clone
+```bash
+git clone https://github.com/Ricardo-Ping/agent-paper-reviewers.git
+cd agent-paper-reviewers
+```
+
+### 2. Create conda env
+CPU:
+```bash
+conda env create -f envs/environment.cpu.yml
+conda activate agent-paper-reviewers-cpu
+```
+
+GPU:
+```bash
+conda env create -f envs/environment.gpu.yml
+conda activate agent-paper-reviewers-gpu
+```
+
+### 3. Install in editable mode
+```bash
+pip install -e .
+```
+
+### 4. Verify runtime
+```bash
+python -m agent_paper_reviewers.cli doctor
+```
 
 ## Quick start
 ```bash
-python -m agent_paper_reviewers.cli doctor
 python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output
 ```
 
-## Output directory
-All artifacts are written to:
-
+Outputs are written to:
 ```text
 output/<paper_title>/
 ```
 
-The same paper title will overwrite the folder on rerun.
+Rerun on the same paper title overwrites that folder.
+
+## Input overview
+`examples/sample_input.json` includes:
+- `paper`: input format/path.
+- `venue`: venue + year.
+- `claims`: core claims list.
+- `constraints`: time/GPU/experiment boundaries.
+- `options.language_mode`: `en` or `en_zh`.
+- `options.executor_backend`: executor backend.
+- `options.mcp_backend`: `http` or `disabled`.
+- `options.always_export_pdf`: always export PDF or not.
 
 ## Output artifacts
 ### Core reports
-- `decision_brief.en.md/json/pdf`: short submission decision brief
-- `full_review.en.md/json/pdf`: full review report with detailed risks
-- `rebuttal.en.md/json/pdf`: rebuttal draft package
+- `decision_brief.en.md/json/pdf`: short decision report.
+- `full_review.en.md/json/pdf`: full detailed review report.
+- `rebuttal.en.md/json/pdf`: rebuttal draft package.
 
-With `language_mode=en_zh`, mirrored Chinese files are also produced:
+### Bilingual mirror
+- If `language_mode=en_zh`, also generate:
 - `decision_brief.zh.md/json/pdf`
 - `full_review.zh.md/json/pdf`
 - `rebuttal.zh.md/json/pdf`
 
-### Structured and debug files
-- `claim_evidence_matrix.json`: claim-evidence anchors
-- `remediation_plan.json`: prioritized remediation tasks
-- `venue_profile_used.json`: resolved venue/year policy snapshot
-- `skill_flow_used.json`: resolved skill workflow used in the run
-- `mcp_runtime.json`: MCP backend/provider and capability switches
-- `run_summary.json`: run status summary
-- `run_result.json`: detailed run status object
-- `artifacts/`: intermediate pipeline artifacts
+### Structured/debug outputs
+- `claim_evidence_matrix.json`
+- `remediation_plan.json`
+- `venue_profile_used.json`
+- `skill_flow_used.json`
+- `mcp_runtime.json`
+- `run_summary.json`
+- `run_result.json`
+- `artifacts/`
 
-## Status semantics
-- `success`: all configured outputs generated
-- `partial_failed`: primary outputs generated, optional parts failed
-- `failed`: pipeline failed before core deliverables were completed
+## Run status semantics
+- `success`: all configured outputs generated.
+- `partial_failed`: core outputs generated, optional parts failed.
+- `failed`: pipeline failed before core deliverables.
+
+## FAQ
+- PDF export fails: run `doctor` and check `pandoc`/LaTeX engines.
+- Chinese text looks broken: open files with UTF-8 encoding.
+- `policy_needs_manual_check=true`: dynamic policy resolve failed and local fallback was used.
 
 ## References
-- Skill doc: `agent-paper-reviewers-skill/SKILL.md`
-- Skill flow: `agent-paper-reviewers-skill/flow_config.yaml`
-- Product spec: `docs/product-spec.md`
-- Input schema: `docs/output-schema.json`
+- OpenClaw Lark README: https://github.com/larksuite/openclaw-lark
+- FastAPI README: https://github.com/fastapi/fastapi
+- LangChain README: https://github.com/langchain-ai/langchain
