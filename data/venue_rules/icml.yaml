@@ -1,0 +1,30 @@
+﻿name: ICML
+default_year: 2026
+years:
+  "2026":
+    scoring_axes: [novelty, soundness, experiment, clarity]
+    weights:
+      novelty: 0.25
+      soundness: 0.30
+      experiment: 0.30
+      clarity: 0.15
+    common_reject_reasons:
+      - "The paper lacks sufficient theoretical or empirical justification."
+      - "Experimental setup does not establish robustness and fairness."
+      - "Reviewer discussion concerns remain unresolved."
+    required_checks:
+      - baseline_coverage
+      - statistical_significance
+      - ablation_completeness
+      - reproducibility_details
+      - failure_case_analysis
+    rebuttal_policy:
+      mode: per_review_only
+      per_review_char_limit: 5000
+      global_char_limit: 0
+      allow_attachment_pdf: false
+      attachment_page_limit: 0
+      allow_links: false
+      dynamic_from_openreview: false
+    openreview_group_id: "ICML.cc/2026/Conference"
+    version_date: "2026-03-25"

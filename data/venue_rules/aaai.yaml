@@ -1,0 +1,30 @@
+﻿name: AAAI
+default_year: 2026
+years:
+  "2026":
+    scoring_axes: [novelty, soundness, experiment, clarity]
+    weights:
+      novelty: 0.25
+      soundness: 0.30
+      experiment: 0.30
+      clarity: 0.15
+    common_reject_reasons:
+      - "Contribution does not clearly exceed incremental improvement."
+      - "Methodological assumptions are not sufficiently validated."
+      - "Experimental evidence is incomplete for claimed scope."
+    required_checks:
+      - baseline_coverage
+      - statistical_significance
+      - ablation_completeness
+      - reproducibility_details
+      - ethics_limitations
+    rebuttal_policy:
+      mode: per_review_only
+      per_review_char_limit: 2500
+      global_char_limit: 0
+      allow_attachment_pdf: false
+      attachment_page_limit: 0
+      allow_links: false
+      dynamic_from_openreview: true
+    openreview_group_id: "AAAI.org/AAAI/2026/Conference"
+    version_date: "2026-03-25"

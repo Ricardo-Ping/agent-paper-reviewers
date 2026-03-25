@@ -1,0 +1,25 @@
+﻿{
+  "paper": {
+    "format": "md",
+    "path": "E:/自建Skill库/Reviewers模拟/examples/sample_paper.md"
+  },
+  "venue": {
+    "name": "NeurIPS",
+    "year": 2025
+  },
+  "claims": [
+    "The proposed method improves average benchmark performance by 3.4 points.",
+    "The method is 22% faster than existing baselines."
+  ],
+  "constraints": {
+    "time_days": 7,
+    "gpu_budget_hours": 40,
+    "max_new_experiments": 4,
+    "cannot_run": ["large_human_eval"]
+  },
+  "options": {
+    "language_mode": "en_zh",
+    "executor_backend": "codex",
+    "always_export_pdf": true
+  }
+}

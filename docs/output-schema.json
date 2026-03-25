@@ -1,0 +1,52 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewRunInput",
+  "type": "object",
+  "required": ["paper", "venue", "claims", "options"],
+  "properties": {
+    "paper": {
+      "type": "object",
+      "required": ["format", "path"],
+      "properties": {
+        "format": {"enum": ["pdf", "md"]},
+        "path": {"type": "string"}
+      }
+    },
+    "venue": {
+      "type": "object",
+      "required": ["name", "year"],
+      "properties": {
+        "name": {"type": "string"},
+        "year": {"type": "integer"}
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1
+    },
+    "constraints": {
+      "type": "object",
+      "properties": {
+        "time_days": {"type": "integer"},
+        "gpu_budget_hours": {"type": "integer"},
+        "max_new_experiments": {"type": "integer"},
+        "cannot_run": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "options": {
+      "type": "object",
+      "required": ["language_mode", "executor_backend", "always_export_pdf"],
+      "properties": {
+        "language_mode": {"enum": ["en", "en_zh"]},
+        "executor_backend": {
+          "enum": ["codex", "agent_api", "openai", "anthropic", "qwen", "local_vllm"]
+        },
+        "always_export_pdf": {"type": "boolean"}
+      }
+    }
+  }
+}

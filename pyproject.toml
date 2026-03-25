@@ -1,0 +1,49 @@
+[project]
+name = "reviewers-sim"
+version = "0.1.0"
+description = "Pipeline-based reviewer simulation for pre-submission risk rehearsal."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.8,<3",
+  "pyyaml>=6.0",
+  "typer>=0.12",
+  "rich>=13.7",
+  "requests>=2.32",
+  "deep-translator>=1.11",
+  "orjson>=3.10",
+  "rapidfuzz>=3.9",
+  "pypdf>=4.3"
+]
+
+[project.optional-dependencies]
+parse = [
+  "pymupdf>=1.24",
+  "pdfplumber>=0.11",
+  "unstructured>=0.15"
+]
+retrieval = [
+  "sentence-transformers>=3.0",
+  "faiss-cpu>=1.8"
+]
+export = [
+  "pypandoc>=1.13"
+]
+obs = [
+  "opentelemetry-api>=1.27",
+  "opentelemetry-sdk>=1.27"
+]
+test = [
+  "pytest>=8.3"
+]
+
+[project.scripts]
+reviewers-sim = "reviewers_sim.cli:app"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,30 @@
+﻿name: KDD
+default_year: 2026
+years:
+  "2026":
+    scoring_axes: [novelty, soundness, experiment, clarity]
+    weights:
+      novelty: 0.25
+      soundness: 0.30
+      experiment: 0.30
+      clarity: 0.15
+    common_reject_reasons:
+      - "The practical impact and novelty are not sufficiently established."
+      - "Evaluation lacks robust statistical support and real-world relevance."
+      - "Discussion feedback is not adequately addressed in rebuttal."
+    required_checks:
+      - baseline_coverage
+      - statistical_significance
+      - ablation_completeness
+      - practical_impact
+      - reproducibility_details
+    rebuttal_policy:
+      mode: per_review_only
+      per_review_char_limit: 2500
+      global_char_limit: 0
+      allow_attachment_pdf: false
+      attachment_page_limit: 0
+      allow_links: false
+      dynamic_from_openreview: true
+    openreview_group_id: "KDD.org/2026/Conference"
+    version_date: "2026-03-25"
