@@ -3,10 +3,10 @@
 Export lock snapshots after environment creation:
 
 ```bash
-conda activate reviewers-sim-cpu
+conda activate agent-paper-reviewers-cpu
 pip freeze > requirements-lock/cpu-freeze.txt
 
-conda activate reviewers-sim-gpu
+conda activate agent-paper-reviewers-gpu
 pip freeze > requirements-lock/gpu-freeze.txt
 ```
 
@@ -16,3 +16,4 @@ Notes:
 - For GPU inference with `vllm`/FAISS-GPU, use Linux + CUDA 12.1.
 - CPU and GPU lock files in this folder reflect the current machine state.
 - Linux-only optional GPU extras are documented in `envs/gpu-linux-extras.md`.
+

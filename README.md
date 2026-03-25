@@ -1,4 +1,4 @@
-﻿# reviewers-sim
+﻿# agent-paper-reviewers
 
 Bilingual docs:
 - English: [README.en.md](README.en.md)
@@ -7,3 +7,4 @@ Bilingual docs:
 Output file guides:
 - English: [OUTPUT_FILES.en.md](OUTPUT_FILES.en.md)
 - 中文: [OUTPUT_FILES.zh.md](OUTPUT_FILES.zh.md)
+

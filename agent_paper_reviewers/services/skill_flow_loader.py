@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +30,7 @@ class SkillFlowProfile:
 
 
 def load_skill_flow(repo_root: Path) -> SkillFlowProfile:
-    path = repo_root / "reviewers-sim-skill" / "flow_config.yaml"
+    path = repo_root / "agent-paper-reviewers-skill" / "flow_config.yaml"
     if not path.exists():
         return SkillFlowProfile(
             steps=list(DEFAULT_STEP_ORDER),
@@ -87,4 +87,5 @@ def load_skill_flow(repo_root: Path) -> SkillFlowProfile:
         warnings=[],
         mcp_capabilities=mcp_capabilities,
     )
+
 

@@ -1,4 +1,4 @@
-﻿# Product Spec - Reviewers Sim v3
+﻿# Product Spec - agent-paper-reviewers v3
 
 ## Goal
 Simulate strict peer review before submission and output:
@@ -8,7 +8,7 @@ Simulate strict peer review before submission and output:
 - rebuttal drafts
 
 ## Pipeline
-The runtime pipeline is Skill-driven from `reviewers-sim-skill/flow_config.yaml`.
+The runtime pipeline is Skill-driven from `agent-paper-reviewers-skill/flow_config.yaml`.
 
 1. Intake
 2. VenueProfileResolver
@@ -31,10 +31,12 @@ Language modes:
 - en_zh (produce mirrored Chinese outputs)
 
 ## Runtime
-- `python -m reviewers_sim.cli doctor`
-- `python -m reviewers_sim.cli run --input <json> --output-dir runs`
+- `python -m agent_paper_reviewers.cli doctor`
+- `python -m agent_paper_reviewers.cli run --input <json> --output-dir runs`
 
 ## Architecture
 - Skill layer: controls workflow order and capability intent.
 - MCP layer: provides concrete tool capabilities (e.g., OpenReview policy resolver).
 - Executor layer: provides model/agent task execution.
+
+

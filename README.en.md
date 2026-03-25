@@ -1,16 +1,16 @@
-﻿# reviewers-sim (English)
+﻿# agent-paper-reviewers (English)
 
-`reviewers-sim` is a pre-submission reviewer simulator using **Skill-driven flow + MCP-provided tool capabilities**.
+`agent-paper-reviewers` is a pre-submission reviewer simulator using **Skill-driven flow + MCP-provided tool capabilities**.
 
 ## Documentation
 - Output artifact guide: `OUTPUT_FILES.en.md`
 - Chinese output artifact guide: `OUTPUT_FILES.zh.md`
 - Chinese README: `README.zh.md`
-- Skill flow config: `reviewers-sim-skill/flow_config.yaml`
+- Skill flow config: `agent-paper-reviewers-skill/flow_config.yaml`
 
 ## Architecture
-- Skill-driven flow: pipeline order is loaded from `reviewers-sim-skill/flow_config.yaml`.
-- MCP capability layer: tool capabilities (for example OpenReview policy resolution) are provided through `reviewers_sim.mcp` providers.
+- Skill-driven flow: pipeline order is loaded from `agent-paper-reviewers-skill/flow_config.yaml`.
+- MCP capability layer: tool capabilities (for example OpenReview policy resolution) are provided through `agent_paper_reviewers.mcp` providers.
 - Executor layer: LLM/agent backends are still plugged via `ExecutorAdapter`.
 
 ## What it does
@@ -43,11 +43,12 @@ The folder is replaced on each run for the same paper title.
 
 ## Quick start
 ```bash
-python -m reviewers_sim.cli doctor
-python -m reviewers_sim.cli run --input examples/sample_input.json --output-dir output
+python -m agent_paper_reviewers.cli doctor
+python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output
 ```
 
 ## Main commands
 - `doctor`: dependency check (`pandoc`, LaTeX engines, conda)
 - `run`: execute the configured Skill pipeline
 - `refresh-venue`: append monthly venue policy refresh reminder
+

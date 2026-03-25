@@ -3,8 +3,8 @@
 import json
 from pathlib import Path
 
-from reviewers_sim.models import ReviewRunInput
-from reviewers_sim.orchestrator import ReviewOrchestrator
+from agent_paper_reviewers.models import ReviewRunInput
+from agent_paper_reviewers.orchestrator import ReviewOrchestrator
 
 
 def test_rebuttal_char_limit(tmp_path: Path) -> None:
@@ -33,3 +33,4 @@ def test_rebuttal_char_limit(tmp_path: Path) -> None:
     for item in rebuttal["items"]:
         assert item["char_count"] <= item["char_limit"]
         assert item["char_limit"] == 10000
+

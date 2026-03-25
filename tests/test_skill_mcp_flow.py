@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from reviewers_sim.models import ReviewRunInput
-from reviewers_sim.orchestrator import ReviewOrchestrator
+from agent_paper_reviewers.models import ReviewRunInput
+from agent_paper_reviewers.orchestrator import ReviewOrchestrator
 
 
 def test_skill_flow_and_mcp_runtime_outputs(tmp_path: Path) -> None:
@@ -37,4 +37,5 @@ def test_skill_flow_and_mcp_runtime_outputs(tmp_path: Path) -> None:
     assert "VenueProfileResolver" in skill_flow["steps"]
     assert mcp_runtime["provider"] in {"http_mcp", "noop_mcp"}
     assert "openreview_policy_resolver" in mcp_runtime["capabilities"]
+
 

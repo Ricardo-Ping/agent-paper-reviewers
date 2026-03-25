@@ -1,4 +1,4 @@
-skill_name: reviewers-sim
+﻿skill_name: agent-paper-reviewers
 version: 1
 
 pipeline_steps:
@@ -17,4 +17,5 @@ pipeline_steps:
 
 mcp_capabilities:
   openreview_policy_resolver: true
+
 

@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from reviewers_sim.models import ReviewRunInput, RunStatus
-from reviewers_sim.orchestrator import ReviewOrchestrator
+from agent_paper_reviewers.models import ReviewRunInput, RunStatus
+from agent_paper_reviewers.orchestrator import ReviewOrchestrator
 
 
 def test_smoke_en_output(tmp_path: Path) -> None:
@@ -33,3 +33,4 @@ def test_smoke_en_output(tmp_path: Path) -> None:
     assert (run_dir / "decision_brief.en.md").exists()
     assert (run_dir / "full_review.en.md").exists()
     assert (run_dir / "rebuttal.en.md").exists()
+

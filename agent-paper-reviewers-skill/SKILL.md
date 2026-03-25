@@ -1,9 +1,9 @@
 ﻿---
-name: reviewers-sim
+name: agent-paper-reviewers
 description: Simulate strict conference reviewers before submission, score risk dimensions, detect missing experiments, and draft rebuttal with executable remediation actions. Use when users provide paper drafts (PDF/Markdown), target venue/year, and claims for reject-risk rehearsal.
 ---
 
-# Reviewers Sim Skill
+# agent-paper-reviewers Skill
 
 ## When to use
 - The user asks for pre-submission rehearsal or reject-risk analysis.
@@ -31,20 +31,21 @@ The runtime step order is Skill-driven via:
 ## Commands
 - Health check:
 ```bash
-python -m reviewers_sim.cli doctor
+python -m agent_paper_reviewers.cli doctor
 ```
 
 - Run pipeline:
 ```bash
-python -m reviewers_sim.cli run --input <input.json> --output-dir runs
+python -m agent_paper_reviewers.cli run --input <input.json> --output-dir runs
 ```
 
 - Refresh venue rule changelog:
 ```bash
-python -m reviewers_sim.cli refresh-venue
+python -m agent_paper_reviewers.cli refresh-venue
 ```
 
 ## Additional references
 - Venue policy notes: `references/venue-rubrics.md`
 - Output templates: `references/report-contract.md`
 - Skill flow config: `flow_config.yaml`
+

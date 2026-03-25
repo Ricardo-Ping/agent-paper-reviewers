@@ -11,7 +11,7 @@ from rich.table import Table
 from .models import ReviewRunInput
 from .orchestrator import ReviewOrchestrator
 
-app = typer.Typer(help="Reviewers simulation pipeline CLI")
+app = typer.Typer(help="agent-paper-reviewers pipeline CLI")
 console = Console()
 
 
@@ -31,7 +31,7 @@ def doctor() -> None:
         "conda": shutil.which("conda") is not None,
     }
 
-    table = Table(title="reviewers-sim doctor")
+    table = Table(title="agent-paper-reviewers doctor")
     table.add_column("Dependency")
     table.add_column("Available")
     for dep, ok in checks.items():
@@ -80,3 +80,4 @@ def refresh_venue() -> None:
 
 if __name__ == "__main__":
     app()
+

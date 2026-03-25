@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from reviewers_sim.models import ReviewRunInput, RunStatus
-from reviewers_sim.orchestrator import ReviewOrchestrator
-import reviewers_sim.pipeline.step_exporter_qa as exporter_step
+from agent_paper_reviewers.models import ReviewRunInput, RunStatus
+from agent_paper_reviewers.orchestrator import ReviewOrchestrator
+import agent_paper_reviewers.pipeline.step_exporter_qa as exporter_step
 
 
 def test_pdf_fallback_partial_failed(tmp_path: Path, monkeypatch) -> None:
@@ -39,3 +39,4 @@ def test_pdf_fallback_partial_failed(tmp_path: Path, monkeypatch) -> None:
     run_dir = Path(summary.output_dir)
     assert summary.status == RunStatus.PARTIAL_FAILED
     assert (run_dir / "export_errors.log").exists()
+

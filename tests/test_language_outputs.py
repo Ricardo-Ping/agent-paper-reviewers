@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from reviewers_sim.models import ReviewRunInput
-from reviewers_sim.orchestrator import ReviewOrchestrator
+from agent_paper_reviewers.models import ReviewRunInput
+from agent_paper_reviewers.orchestrator import ReviewOrchestrator
 
 
 @pytest.fixture
@@ -45,3 +45,4 @@ def test_bilingual_outputs(sample_input: Path, tmp_path: Path) -> None:
     assert (run_dir / "decision_brief.zh.md").exists()
     assert (run_dir / "full_review.en.json").exists()
     assert (run_dir / "full_review.zh.json").exists()
+

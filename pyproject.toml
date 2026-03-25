@@ -1,5 +1,5 @@
 [project]
-name = "reviewers-sim"
+name = "agent-paper-reviewers"
 version = "0.1.0"
 description = "Pipeline-based reviewer simulation for pre-submission risk rehearsal."
 readme = "README.md"
@@ -38,7 +38,7 @@ test = [
 ]
 
 [project.scripts]
-reviewers-sim = "reviewers_sim.cli:app"
+agent-paper-reviewers = "agent_paper_reviewers.cli:app"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -47,3 +47,4 @@ build-backend = "setuptools.build_meta"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
