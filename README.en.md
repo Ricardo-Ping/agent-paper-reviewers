@@ -1,11 +1,17 @@
 ﻿# reviewers-sim (English)
 
-`reviewers-sim` is a pipeline-based pre-submission reviewer simulator.
+`reviewers-sim` is a pre-submission reviewer simulator using **Skill-driven flow + MCP-provided tool capabilities**.
 
 ## Documentation
 - Output artifact guide: `OUTPUT_FILES.en.md`
 - Chinese output artifact guide: `OUTPUT_FILES.zh.md`
 - Chinese README: `README.zh.md`
+- Skill flow config: `reviewers-sim-skill/flow_config.yaml`
+
+## Architecture
+- Skill-driven flow: pipeline order is loaded from `reviewers-sim-skill/flow_config.yaml`.
+- MCP capability layer: tool capabilities (for example OpenReview policy resolution) are provided through `reviewers_sim.mcp` providers.
+- Executor layer: LLM/agent backends are still plugged via `ExecutorAdapter`.
 
 ## What it does
 - Parses paper drafts (`pdf` / `md`)
@@ -15,9 +21,11 @@
 - Generates remediation plan and rebuttal draft
 - Exports `MD + JSON + PDF`
 
-## Language mode
-- `en`: English outputs only
-- `en_zh`: English + Chinese outputs (mirrored artifacts)
+## Runtime options
+- `language_mode`: `en` | `en_zh`
+- `executor_backend`: `codex|agent_api|openai|anthropic|qwen|local_vllm`
+- `mcp_backend`: `http|disabled`
+- `always_export_pdf`: `true|false`
 
 ## Output location
 Outputs are always written to:
@@ -41,14 +49,5 @@ python -m reviewers_sim.cli run --input examples/sample_input.json --output-dir 
 
 ## Main commands
 - `doctor`: dependency check (`pandoc`, LaTeX engines, conda)
-- `run`: execute the 12-step pipeline
+- `run`: execute the configured Skill pipeline
 - `refresh-venue`: append monthly venue policy refresh reminder
-
-## Architecture note: MCP + Skill
-Yes, combining MCP + Skill is a good approach here.
-
-Recommended split:
-- Skill layer: workflow policy, prompt templates, output contract, runbook.
-- MCP/tool layer: concrete capability calls (OpenReview fetch, file parsing, storage, model endpoints).
-
-Use Skill to define "how to run the process", and MCP to provide "what tools can be called".

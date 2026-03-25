@@ -70,6 +70,8 @@ class ExporterAndQAGateStep(PipelineStep):
             "claim_evidence_matrix.json": ctx.artifacts["claim_evidence_matrix"],
             "remediation_plan.json": ctx.artifacts["remediation_plan"],
             "venue_profile_used.json": ctx.artifacts["venue_profile"],
+            "skill_flow_used.json": ctx.artifacts.get("skill_flow", {}),
+            "mcp_runtime.json": ctx.artifacts.get("mcp_runtime", {}),
         }
 
         if ctx.input_data.options.language_mode.value == "en_zh":

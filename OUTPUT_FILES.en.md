@@ -16,6 +16,10 @@ If `language_mode=en_zh`, mirrored Chinese files are also generated:
 - `full_review.zh.md/json/pdf`
 - `rebuttal.zh.md/json/pdf`
 
+## Skill + MCP runtime outputs
+- `skill_flow_used.json`: resolved Skill workflow order and source config.
+- `mcp_runtime.json`: active MCP backend/provider and exposed capabilities.
+
 ## Supporting outputs
 - `claim_evidence_matrix.json`: claim-to-evidence mapping.
 - `remediation_plan.json`: prioritized experiment actions.

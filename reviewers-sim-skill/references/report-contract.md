@@ -7,6 +7,8 @@ Deliverables (always):
 - claim_evidence_matrix.json
 - remediation_plan.json
 - venue_profile_used.json
+- skill_flow_used.json
+- mcp_runtime.json
 
 Language modes:
 - en: English outputs only.

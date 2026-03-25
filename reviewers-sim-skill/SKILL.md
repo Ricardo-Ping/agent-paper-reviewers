@@ -24,6 +24,10 @@ description: Simulate strict conference reviewers before submission, score risk 
 5. Generate remediation tasks and rebuttal package.
 6. Export fixed deliverables (`MD + JSON + PDF`).
 
+The runtime step order is Skill-driven via:
+- `flow_config.yaml` (pipeline step sequence)
+- `mcp_capabilities` section in the same file (capability intent)
+
 ## Commands
 - Health check:
 ```bash
@@ -43,3 +47,4 @@ python -m reviewers_sim.cli refresh-venue
 ## Additional references
 - Venue policy notes: `references/venue-rubrics.md`
 - Output templates: `references/report-contract.md`
+- Skill flow config: `flow_config.yaml`

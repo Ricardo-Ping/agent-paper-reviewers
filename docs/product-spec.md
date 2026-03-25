@@ -8,6 +8,8 @@ Simulate strict peer review before submission and output:
 - rebuttal drafts
 
 ## Pipeline
+The runtime pipeline is Skill-driven from `reviewers-sim-skill/flow_config.yaml`.
+
 1. Intake
 2. VenueProfileResolver
 3. PaperParser
@@ -31,3 +33,8 @@ Language modes:
 ## Runtime
 - `python -m reviewers_sim.cli doctor`
 - `python -m reviewers_sim.cli run --input <json> --output-dir runs`
+
+## Architecture
+- Skill layer: controls workflow order and capability intent.
+- MCP layer: provides concrete tool capabilities (e.g., OpenReview policy resolver).
+- Executor layer: provides model/agent task execution.

@@ -16,6 +16,10 @@ output/<论文标题>/
 - `full_review.zh.md/json/pdf`
 - `rebuttal.zh.md/json/pdf`
 
+## Skill + MCP 运行产物
+- `skill_flow_used.json`：本次运行实际采用的 Skill 流程顺序与来源配置。
+- `mcp_runtime.json`：当前 MCP backend/provider 及其能力开关。
+
 ## 辅助产物
 - `claim_evidence_matrix.json`：主张-证据对齐矩阵。
 - `remediation_plan.json`：补救实验优先级清单。

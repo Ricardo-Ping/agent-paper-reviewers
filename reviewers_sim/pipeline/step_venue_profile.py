@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-from ..services.openreview_policy import resolve_openreview_policy
 from ..services.venue_loader import load_venue_profile
 from .base import PipelineContext, PipelineStep
 
@@ -22,13 +21,17 @@ class VenueProfileResolverStep(PipelineStep):
         policy_needs_manual_check = False
 
         if policy.dynamic_from_openreview:
-            resolved = resolve_openreview_policy(year_profile.openreview_group_id)
-            if resolved.policy:
-                policy = resolved.policy
-            else:
+            if ctx.mcp_tools is None:
                 policy_needs_manual_check = True
-                if resolved.warning:
-                    ctx.qa_issues.append(f"policy_resolver_warning:{resolved.warning}")
+                ctx.qa_issues.append("policy_resolver_warning:mcp_provider_missing")
+            else:
+                resolved = ctx.mcp_tools.resolve_openreview_policy(year_profile.openreview_group_id)
+                if resolved.policy:
+                    policy = resolved.policy
+                else:
+                    policy_needs_manual_check = True
+                    if resolved.warning:
+                        ctx.qa_issues.append(f"policy_resolver_warning:{resolved.warning}")
 
         profile_payload = {
             "venue": venue,

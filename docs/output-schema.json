@@ -45,6 +45,7 @@
         "executor_backend": {
           "enum": ["codex", "agent_api", "openai", "anthropic", "qwen", "local_vllm"]
         },
+        "mcp_backend": {"enum": ["http", "disabled"]},
         "always_export_pdf": {"type": "boolean"}
       }
     }
