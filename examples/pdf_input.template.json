@@ -1,4 +1,4 @@
-﻿{
+{
   "paper": {
     "format": "pdf",
     "path": "path/to/your-paper.pdf"
@@ -8,9 +8,8 @@
     "year": 2025
   },
   "claims": [
-    "The proposed LLM-based system improves SQL dialect translation quality across multiple dialect pairs.",
-    "The method demonstrates stronger generalization than prior translation baselines.",
-    "The system reduces manual effort compared with rule-heavy SQL dialect conversion pipelines."
+    "Claim 1: your core contribution.",
+    "Claim 2: your strongest empirical result."
   ],
   "constraints": {
     "time_days": 10,
@@ -20,7 +19,7 @@
   },
   "options": {
     "language_mode": "en_zh",
-    "executor_backend": "local_vllm",
+    "executor_backend": "codex",
     "mcp_backend": "http",
     "always_export_pdf": true
   }

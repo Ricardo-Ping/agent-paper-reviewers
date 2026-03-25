@@ -48,6 +48,15 @@ def run_pipeline(
         raise typer.BadParameter(f"Input file not found: {input}")
 
     raw = json.loads(input.read_text(encoding="utf-8-sig"))
+
+    # Resolve relative paper paths against the input json directory.
+    paper = raw.get("paper", {})
+    paper_path = paper.get("path")
+    if isinstance(paper_path, str) and paper_path.strip():
+        path_obj = Path(paper_path)
+        if not path_obj.is_absolute():
+            raw["paper"]["path"] = str((input.parent / path_obj).resolve())
+
     review_input = ReviewRunInput.model_validate(raw)
 
     orchestrator = ReviewOrchestrator(_repo_root())

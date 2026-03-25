@@ -25,6 +25,19 @@ I built this project for one practical reason: before submission, I want to run 
 - MCP capabilities: concrete tool capabilities are injected via MCP providers.
 - Pluggable executors: `codex|agent_api|openai|anthropic|qwen|local_vllm`.
 
+## One-line command for Agent
+You can tell your Agent directly:
+
+```text
+Please set up and initialize agent-paper-reviewers in this repo: create and activate conda env agent-paper-reviewers-gpu, run pip install -e ., run python -m agent_paper_reviewers.cli doctor, and execute one validation run with examples/sample_input.json.
+```
+
+If the PDF is only uploaded in chat and not saved yet:
+
+```text
+Please save the PDF I uploaded to input_files/paper.pdf in this repo first, then create input.json using that path and run the full review flow.
+```
+
 ## Requirements
 - OS: Windows or Linux (Linux + CUDA 12.1 recommended for GPU inference).
 - Python: `3.11.x`.
@@ -66,6 +79,29 @@ python -m agent_paper_reviewers.cli doctor
 ```bash
 python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output
 ```
+
+Note:
+- This command reads `examples/sample_input.json`.
+- That sample input currently points to `examples/sample_paper.md` (a Markdown sample), not your custom PDF.
+- `paper.path` supports both absolute and relative paths; relative paths are resolved against the input.json directory.
+
+To run your own PDF directly, use either:
+
+Option 1 (recommended): use the provided PDF sample input
+```bash
+python -m agent_paper_reviewers.cli run --input examples/sql_translation_gpu_input.json --output-dir output
+```
+
+Option 2: create your own `input.json` and make sure:
+```json
+"paper": {
+  "format": "pdf",
+  "path": "absolute path to your PDF"
+}
+```
+
+You can also start from:
+- `examples/pdf_input.template.json`
 
 Outputs are written to:
 ```text
@@ -116,8 +152,3 @@ Rerun on the same paper title overwrites that folder.
 - PDF export fails: run `doctor` and check `pandoc`/LaTeX engines.
 - Chinese text looks broken: open files with UTF-8 encoding.
 - `policy_needs_manual_check=true`: dynamic policy resolve failed and local fallback was used.
-
-## References
-- OpenClaw Lark README: https://github.com/larksuite/openclaw-lark
-- FastAPI README: https://github.com/fastapi/fastapi
-- LangChain README: https://github.com/langchain-ai/langchain

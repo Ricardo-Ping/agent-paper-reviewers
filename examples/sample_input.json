@@ -1,7 +1,7 @@
 ﻿{
   "paper": {
     "format": "md",
-    "path": "E:/自建Skill库/Reviewers模拟/examples/sample_paper.md"
+    "path": "sample_paper.md"
   },
   "venue": {
     "name": "NeurIPS",

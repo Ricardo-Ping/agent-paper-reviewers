@@ -24,6 +24,25 @@
 - MCP 提供工具能力：例如 OpenReview 规则解析能力通过 MCP provider 注入。
 - Executor 可插拔：支持 `codex|agent_api|openai|anthropic|qwen|local_vllm`。
 
+## 给 Agent 的一句话指令
+可以直接对 Agent 说：
+
+```text
+请在当前仓库安装并初始化 agent-paper-reviewers：创建并激活 conda 环境 agent-paper-reviewers-gpu，执行 pip install -e .，运行 python -m agent_paper_reviewers.cli doctor，并用 examples/sample_input.json 跑一次验证。
+```
+
+如果你要让 Agent 直接跑你的 PDF，可以说：
+
+```text
+请帮我基于这篇 PDF 创建 input.json（paper.format=pdf，paper.path=绝对路径），然后运行 python -m agent_paper_reviewers.cli run --input <input.json> --output-dir output，并汇总输出目录中的关键结论。
+```
+
+如果 PDF 是你直接发在 Agent 对话窗口、但还没保存到本地，可以说：
+
+```text
+请先把我刚上传的 PDF 保存到当前仓库 input_files/paper.pdf，然后基于这个路径生成 input.json 并运行评审流程。
+```
+
 ## 环境要求
 - 操作系统：Windows / Linux（GPU 推理建议 Linux + CUDA 12.1）。
 - Python：`3.11.x`。
@@ -65,6 +84,29 @@ python -m agent_paper_reviewers.cli doctor
 ```bash
 python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output
 ```
+
+说明：
+- 这条命令会读取 `examples/sample_input.json`。
+- 当前这个示例文件默认指向的是 `examples/sample_paper.md`（Markdown 示例），不是你的自定义 PDF。
+- `paper.path` 支持绝对路径和相对路径；相对路径会自动按 input.json 所在目录解析。
+
+如果你要直接跑自己的 PDF，有两种方式：
+
+方式 1（推荐）：使用现成 PDF 示例输入
+```bash
+python -m agent_paper_reviewers.cli run --input examples/sql_translation_gpu_input.json --output-dir output
+```
+
+方式 2：新建你自己的 `input.json`，并确保：
+```json
+"paper": {
+  "format": "pdf",
+  "path": "你的PDF绝对路径"
+}
+```
+
+也可以用模板文件：
+- `examples/pdf_input.template.json`
 
 运行结束后，结果会写到：
 ```text
@@ -126,9 +168,3 @@ docs/                               # 规格与 schema
 examples/                           # 示例输入
 tests/                              # 自动化测试
 ```
-
-## 参考与致谢
-文档组织方式参考了优秀开源项目常见结构（中英入口、快速开始、输出契约、FAQ）：
-- OpenClaw Lark README: https://github.com/larksuite/openclaw-lark
-- FastAPI README: https://github.com/fastapi/fastapi
-- LangChain README: https://github.com/langchain-ai/langchain
