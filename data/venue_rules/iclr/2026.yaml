@@ -1,0 +1,35 @@
+schema_version: 1
+venue: iclr
+year: 2026
+display_name: ICLR
+profile:
+  scoring_axes:
+  - novelty
+  - soundness
+  - experiment
+  - clarity
+  weights:
+    novelty: 0.25
+    soundness: 0.3
+    experiment: 0.3
+    clarity: 0.15
+  common_reject_reasons:
+  - Main claims are not fully validated under realistic settings.
+  - Evidence for generalization is weak or missing.
+  - Discussion responses do not directly answer reviewer concerns.
+  required_checks:
+  - baseline_coverage
+  - statistical_significance
+  - ablation_completeness
+  - reproducibility_details
+  - limitation_discussion
+  rebuttal_policy:
+    mode: per_review_only
+    per_review_char_limit: 2500
+    global_char_limit: 0
+    allow_attachment_pdf: false
+    attachment_page_limit: 0
+    allow_links: false
+    dynamic_from_openreview: true
+  openreview_group_id: ICLR.cc/2026/Conference
+  version_date: '2026-03-25'

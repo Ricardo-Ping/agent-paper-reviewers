@@ -1,0 +1,35 @@
+schema_version: 1
+venue: _fallback
+year: 0
+display_name: GlobalFallback
+profile:
+  scoring_axes:
+  - novelty
+  - soundness
+  - experiment
+  - clarity
+  weights:
+    novelty: 0.25
+    soundness: 0.3
+    experiment: 0.3
+    clarity: 0.15
+  common_reject_reasons:
+  - Core claims are not yet sufficiently supported by empirical or analytical evidence.
+  - Baseline comparisons and ablation analysis are incomplete.
+  - Reproducibility and reporting details are below venue expectations.
+  required_checks:
+  - baseline_coverage
+  - statistical_significance
+  - ablation_completeness
+  - reproducibility_details
+  - limitation_discussion
+  rebuttal_policy:
+    mode: per_review_only
+    per_review_char_limit: 2500
+    global_char_limit: 0
+    allow_attachment_pdf: false
+    attachment_page_limit: 0
+    allow_links: false
+    dynamic_from_openreview: false
+  openreview_group_id: ''
+  version_date: '2026-03-25'

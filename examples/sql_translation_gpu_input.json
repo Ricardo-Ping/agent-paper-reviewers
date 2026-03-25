@@ -4,8 +4,8 @@
     "path": "path/to/your-paper.pdf"
   },
   "venue": {
-    "name": "NeurIPS",
-    "year": 2025
+    "name": "ICLR",
+    "year": 2026
   },
   "claims": [
     "The proposed LLM-based system improves SQL dialect translation quality across multiple dialect pairs.",
@@ -25,3 +25,4 @@
     "always_export_pdf": true
   }
 }
+

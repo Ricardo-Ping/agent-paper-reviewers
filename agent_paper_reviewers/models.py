@@ -84,6 +84,14 @@ class VenueYearProfile(BaseModel):
     version_date: str
 
 
+class VenueRuleSnapshot(BaseModel):
+    schema_version: int = 1
+    venue: str
+    year: int
+    display_name: str
+    profile: VenueYearProfile
+
+
 class VenueProfile(BaseModel):
     name: str
     default_year: int

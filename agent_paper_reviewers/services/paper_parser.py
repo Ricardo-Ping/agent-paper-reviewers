@@ -4,6 +4,16 @@ import re
 from pathlib import Path
 
 try:
+    import fitz  # type: ignore
+except Exception:  # pragma: no cover - optional dependency fallback
+    fitz = None
+
+try:
+    import pdfplumber  # type: ignore
+except Exception:  # pragma: no cover - optional dependency fallback
+    pdfplumber = None
+
+try:
     from pypdf import PdfReader
 except Exception:  # pragma: no cover - optional dependency fallback
     PdfReader = None
@@ -45,21 +55,20 @@ def parse_markdown(path: Path) -> dict:
 
 
 def parse_pdf(path: Path) -> dict:
-    if PdfReader is None:
-        raise RuntimeError("pypdf is required for PDF parsing but is not installed.")
+    pages, backend = _extract_pdf_pages(path)
+    if not pages:
+        raise RuntimeError("unable_to_parse_pdf_with_available_backends")
 
-    reader = PdfReader(str(path))
-    pages = []
-    all_text = []
-    for i, page in enumerate(reader.pages):
-        text = page.extract_text() or ""
-        pages.append({"page": i + 1, "text": text})
-        all_text.append(text)
-
-    raw = "\n\n".join(all_text)
+    raw = "\n\n".join(page["text"] for page in pages if page["text"].strip())
     sections = _naive_sections_from_text(raw)
     title = _extract_title(raw.splitlines())
-    return {"title": title, "sections": sections, "raw_text": raw, "pages": pages}
+    return {
+        "title": title,
+        "sections": sections,
+        "raw_text": raw,
+        "pages": pages,
+        "parse_backend": backend,
+    }
 
 
 def split_passages(structured: dict) -> list[dict]:
@@ -112,11 +121,19 @@ def _naive_sections_from_text(raw_text: str) -> list[dict]:
             if re.search(pattern, lowered):
                 matched = name
                 break
-        if matched and len(line.split()) <= 12:
+        if matched and _is_heading_line(line):
             if current["text_lines"]:
                 chunks.append({"name": current["name"], "text": "\n".join(current["text_lines"])})
             current = {"name": matched, "text_lines": []}
             continue
+
+        normalized_heading = _normalize_heading_label(line)
+        if normalized_heading and _is_heading_line(line):
+            if current["text_lines"]:
+                chunks.append({"name": current["name"], "text": "\n".join(current["text_lines"])})
+            current = {"name": normalized_heading, "text_lines": []}
+            continue
+
         current["text_lines"].append(line)
 
     if current["text_lines"]:
@@ -125,3 +142,95 @@ def _naive_sections_from_text(raw_text: str) -> list[dict]:
     if not chunks:
         return [{"name": name, "text": ""} for name in SECTION_FALLBACK]
     return chunks
+
+
+def _extract_pdf_pages(path: Path) -> tuple[list[dict], str]:
+    pages = _extract_with_pymupdf(path)
+    if pages:
+        return pages, "pymupdf"
+
+    pages = _extract_with_pdfplumber(path)
+    if pages:
+        return pages, "pdfplumber"
+
+    pages = _extract_with_pypdf(path)
+    if pages:
+        return pages, "pypdf"
+
+    return [], "none"
+
+
+def _extract_with_pymupdf(path: Path) -> list[dict]:
+    if fitz is None:
+        return []
+    try:
+        doc = fitz.open(str(path))
+    except Exception:  # noqa: BLE001
+        return []
+
+    pages: list[dict] = []
+    for i, page in enumerate(doc):
+        text = page.get_text("text") or ""
+        pages.append({"page": i + 1, "text": text})
+    return pages
+
+
+def _extract_with_pdfplumber(path: Path) -> list[dict]:
+    if pdfplumber is None:
+        return []
+    pages: list[dict] = []
+    try:
+        with pdfplumber.open(str(path)) as pdf:
+            for i, page in enumerate(pdf.pages):
+                text = page.extract_text() or ""
+                pages.append({"page": i + 1, "text": text})
+    except Exception:  # noqa: BLE001
+        return []
+    return pages
+
+
+def _extract_with_pypdf(path: Path) -> list[dict]:
+    if PdfReader is None:
+        return []
+    try:
+        reader = PdfReader(str(path))
+    except Exception:  # noqa: BLE001
+        return []
+
+    pages: list[dict] = []
+    for i, page in enumerate(reader.pages):
+        text = page.extract_text() or ""
+        pages.append({"page": i + 1, "text": text})
+    return pages
+
+
+def _is_heading_line(line: str) -> bool:
+    compact = re.sub(r"\s+", " ", line.strip())
+    if not compact:
+        return False
+    if len(compact.split()) > 14:
+        return False
+    if re.fullmatch(r"[\dIVXivx\.\s]{1,12}", compact):
+        return False
+    alpha_ratio = sum(ch.isalpha() for ch in compact) / max(1, len(compact))
+    return alpha_ratio >= 0.45
+
+
+def _normalize_heading_label(line: str) -> str | None:
+    cleaned = re.sub(r"^\d+(\.\d+)*\s*", "", line.strip()).lower()
+    patterns = [
+        ("abstract", r"\babstract\b"),
+        ("introduction", r"\bintroduction\b"),
+        ("related work", r"\brelated work\b"),
+        ("method", r"\b(method|approach|model)\b"),
+        ("experiments", r"\b(experiment|evaluation|results)\b"),
+        ("ablation", r"\bablation\b"),
+        ("analysis", r"\banalysis\b"),
+        ("limitations", r"\blimitations?\b"),
+        ("conclusion", r"\bconclusion\b"),
+        ("appendix", r"\bappendix\b"),
+    ]
+    for label, pattern in patterns:
+        if re.search(pattern, cleaned):
+            return label
+    return None

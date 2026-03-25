@@ -126,6 +126,22 @@ output/<paper_title>/
 - `options.mcp_backend`: `http` 或 `disabled`。
 - `options.always_export_pdf`: 是否强制导出 PDF。
 
+## 执行器后端（真实调用）
+- `agent_api`：`OpenClawNodeExecutor`，调用 `OpenClaw /api/sessions/spawn`。
+- `openai`：OpenAI 兼容接口（`/v1/chat/completions`）。
+- `anthropic`：Anthropic Messages API（`/v1/messages`）。
+- `qwen`：Qwen OpenAI 兼容接口。
+- `local_vllm`：本地 vLLM OpenAI 兼容接口。
+- `codex`：走 OpenAI 兼容接口（可配置模型名）。
+
+常用环境变量：
+- `AGENT_PAPER_REVIEWERS_OPENCLAW_URL`（默认 `http://localhost:18789`）
+- `OPENAI_API_KEY` / `OPENAI_BASE_URL`
+- `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL`
+- `QWEN_API_KEY` / `QWEN_BASE_URL`
+- `LOCAL_VLLM_BASE_URL` / `LOCAL_VLLM_API_KEY`
+- `SEMANTIC_SCHOLAR_API_KEY`（用于 Citation Graph，避免匿名限流）
+
 ## 输出文件说明
 ### 核心报告
 - `decision_brief.en.md/json/pdf`: 短版决策报告（投稿建议 + Top 风险 + 必补实验）。
@@ -157,14 +173,30 @@ output/<paper_title>/
 - PDF 导出失败：先运行 `doctor`，确认 `pandoc` 和 LaTeX 引擎可用。
 - 中文显示异常：请用 UTF-8 打开 Markdown/JSON 文件。
 - 规则标记 `policy_needs_manual_check=true`：表示动态规则解析失败，已回退本地规则。
+- `citation_graph_warning:semantic_scholar_status_429`：Semantic Scholar 匿名请求限流，建议配置 `SEMANTIC_SCHOLAR_API_KEY`。
 
 ## 项目结构
 ```text
 agent_paper_reviewers/              # 核心代码
 agent-paper-reviewers-skill/        # Skill 定义与流程配置
-data/venue_rules/                   # 会议规则库
+data/venue_rules/                   # 会议规则库（目录化）
+  _fallback.yaml                    # 全局回退规则
+  neurips/2024.yaml                 # 按会议+年份存放
+  iclr/2026.yaml
+  sigmod/2024.yaml
 envs/                               # conda 环境定义
 docs/                               # 规格与 schema
 examples/                           # 示例输入
 tests/                              # 自动化测试
 ```
+
+## 会议规则刷新
+```bash
+python -m agent_paper_reviewers.cli refresh-venue --venue all --year 2026
+```
+
+常用参数：
+- `--venue all`：刷新全部会议。
+- `--venue iclr,icml`：只刷新指定会议。
+- `--openreview-group <group_id>`：单会议时覆盖 OpenReview group。
+- `--dry-run`：只预览，不写文件。

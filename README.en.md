@@ -121,6 +121,22 @@ Rerun on the same paper title overwrites that folder.
 - `options.mcp_backend`: `http` or `disabled`.
 - `options.always_export_pdf`: always export PDF or not.
 
+## Executor backends (real calls)
+- `agent_api`: `OpenClawNodeExecutor` via `OpenClaw /api/sessions/spawn`.
+- `openai`: OpenAI-compatible chat completions.
+- `anthropic`: Anthropic Messages API.
+- `qwen`: Qwen OpenAI-compatible endpoint.
+- `local_vllm`: local vLLM OpenAI-compatible endpoint.
+- `codex`: OpenAI-compatible endpoint with configurable model.
+
+Common environment variables:
+- `AGENT_PAPER_REVIEWERS_OPENCLAW_URL` (default `http://localhost:18789`)
+- `OPENAI_API_KEY` / `OPENAI_BASE_URL`
+- `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL`
+- `QWEN_API_KEY` / `QWEN_BASE_URL`
+- `LOCAL_VLLM_BASE_URL` / `LOCAL_VLLM_API_KEY`
+- `SEMANTIC_SCHOLAR_API_KEY` (for Citation Graph, helps avoid anonymous rate limits)
+
 ## Output artifacts
 ### Core reports
 - `decision_brief.en.md/json/pdf`: short decision report.
@@ -148,7 +164,21 @@ Rerun on the same paper title overwrites that folder.
 - `partial_failed`: core outputs generated, optional parts failed.
 - `failed`: pipeline failed before core deliverables.
 
+## Venue rule refresh
+```bash
+python -m agent_paper_reviewers.cli refresh-venue --venue all --year 2026
+```
+
+Common options:
+- `--venue all`: refresh all venues.
+- `--venue iclr,icml`: refresh selected venues only.
+- `--openreview-group <group_id>`: override OpenReview group for a single venue refresh.
+- `--dry-run`: preview without writing files.
+
+Venue rules are now directory-based under `data/venue_rules/<venue>/<year>.yaml`, plus global fallback `_fallback.yaml`.
+
 ## FAQ
 - PDF export fails: run `doctor` and check `pandoc`/LaTeX engines.
 - Chinese text looks broken: open files with UTF-8 encoding.
 - `policy_needs_manual_check=true`: dynamic policy resolve failed and local fallback was used.
+- `citation_graph_warning:semantic_scholar_status_429`: Semantic Scholar request was rate-limited; configure `SEMANTIC_SCHOLAR_API_KEY`.

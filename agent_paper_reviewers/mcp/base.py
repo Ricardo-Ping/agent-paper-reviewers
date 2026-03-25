@@ -8,6 +8,7 @@ from ..models import RebuttalPolicy
 @dataclass
 class PolicyResolveResult:
     policy: RebuttalPolicy | None
+    profile_overrides: dict | None = None
     warning: str | None = None
 
 
@@ -27,4 +28,3 @@ class MCPToolProvider:
         return {
             "openreview_policy_resolver": False,
         }
-

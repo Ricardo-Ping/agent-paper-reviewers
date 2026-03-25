@@ -1,0 +1,36 @@
+schema_version: 1
+venue: neurips
+year: 2025
+display_name: NeurIPS
+profile:
+  scoring_axes:
+  - novelty
+  - soundness
+  - experiment
+  - clarity
+  weights:
+    novelty: 0.25
+    soundness: 0.3
+    experiment: 0.3
+    clarity: 0.15
+  common_reject_reasons:
+  - Core claim lacks direct empirical support.
+  - Insufficient comparison with competitive baselines.
+  - Ablation and significance analyses are incomplete.
+  - Paper lacks clear positioning against prior work.
+  required_checks:
+  - baseline_coverage
+  - statistical_significance
+  - ablation_completeness
+  - reproducibility_details
+  - error_analysis
+  rebuttal_policy:
+    mode: per_review_only
+    per_review_char_limit: 10000
+    global_char_limit: 0
+    allow_attachment_pdf: false
+    attachment_page_limit: 0
+    allow_links: false
+    dynamic_from_openreview: false
+  openreview_group_id: NeurIPS.cc/2025/Conference
+  version_date: '2026-03-25'

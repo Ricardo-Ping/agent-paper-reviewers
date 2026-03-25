@@ -7,12 +7,14 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from .executors.base import ExecutorAdapter
 from .executors.factory import get_executor
 from .mcp.factory import get_mcp_provider
 from .models import ReviewRunInput, RunStatus, RunSummary
 from .pipeline import (
     ClaimEvidenceAlignerStep,
     ClaimNormalizerStep,
+    CitationGraphStep,
     EvidenceIndexerStep,
     ExporterAndQAGateStep,
     GapDetectorStep,
@@ -54,7 +56,8 @@ class ReviewOrchestrator:
         )
 
         if flow_profile.warnings:
-            ctx.qa_issues.extend(flow_profile.warnings)
+            for warning in flow_profile.warnings:
+                ctx.add_qa_issue(warning)
 
         skill_flow_payload = {
             "source": flow_profile.source,
@@ -72,7 +75,7 @@ class ReviewOrchestrator:
         ctx.dump_json("artifacts/skill_flow_used.json", skill_flow_payload)
         ctx.dump_json("artifacts/mcp_runtime.json", mcp_runtime_payload)
 
-        step_registry = self._build_step_registry(translator)
+        step_registry = self._build_step_registry(translator, executor)
         steps = self._build_step_sequence(flow_profile.steps, step_registry)
 
         for step in steps:
@@ -81,7 +84,7 @@ class ReviewOrchestrator:
             except Exception as exc:  # noqa: BLE001
                 ctx.status = RunStatus.FAILED
                 err_msg = f"step_failed:{step.name}:{exc}"
-                ctx.qa_issues.append(err_msg)
+                ctx.add_qa_issue(err_msg)
                 run_dir.mkdir(parents=True, exist_ok=True)
                 (run_dir / "pipeline_exception.log").write_text(
                     traceback.format_exc(), encoding="utf-8"
@@ -100,17 +103,22 @@ class ReviewOrchestrator:
         )
         return summary
 
-    def _build_step_registry(self, translator: Translator) -> dict[str, PipelineStep]:
+    def _build_step_registry(
+        self,
+        translator: Translator,
+        executor: ExecutorAdapter,
+    ) -> dict[str, PipelineStep]:
         return {
             "Intake": IntakeStep(),
             "VenueProfileResolver": VenueProfileResolverStep(self.repo_root),
             "PaperParser": PaperParserStep(),
-            "ClaimNormalizer": ClaimNormalizerStep(),
+            "ClaimNormalizer": ClaimNormalizerStep(executor),
             "EvidenceIndexer": EvidenceIndexerStep(),
             "ClaimEvidenceAligner": ClaimEvidenceAlignerStep(),
+            "CitationGraph": CitationGraphStep(),
             "GapDetector": GapDetectorStep(),
-            "RiskRanker": RiskRankerStep(),
-            "RemediationPlanner": RemediationPlannerStep(),
+            "RiskRanker": RiskRankerStep(executor),
+            "RemediationPlanner": RemediationPlannerStep(executor),
             "RebuttalComposer": RebuttalComposerStep(translator),
             "ReportBuilder": ReportBuilderStep(translator),
             "ExporterAndQAGate": ExporterAndQAGateStep(),

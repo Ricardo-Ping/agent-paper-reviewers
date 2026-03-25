@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .models import ReviewRunInput
-from .orchestrator import ReviewOrchestrator
+from .services.venue_sync import refresh_venue_rules
 
 app = typer.Typer(help="agent-paper-reviewers pipeline CLI")
 console = Console()
@@ -44,6 +44,8 @@ def run_pipeline(
     input: Path = typer.Option(..., "--input", help="Path to run input json"),
     output_dir: Path = typer.Option(Path("output"), "--output-dir", help="Output root directory"),
 ) -> None:
+    from .orchestrator import ReviewOrchestrator
+
     if not input.exists():
         raise typer.BadParameter(f"Input file not found: {input}")
 
@@ -72,19 +74,44 @@ def run_pipeline(
 
 
 @app.command("refresh-venue")
-def refresh_venue() -> None:
-    """Generate a changelog stub for monthly venue policy refresh."""
+def refresh_venue(
+    venue: str = typer.Option(
+        "all",
+        "--venue",
+        help="Venue slug(s), comma separated, or 'all'. Example: iclr,icml",
+    ),
+    year: int = typer.Option(..., "--year", help="Target year snapshot to write."),
+    openreview_group: str = typer.Option(
+        "",
+        "--openreview-group",
+        help="Optional OpenReview group id override for single venue sync.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview only, do not write files."),
+) -> None:
+    """Refresh venue/year policy snapshots from OpenReview policy extraction."""
     root = _repo_root()
-    changelog = root / "data" / "venue_rules" / "changelog.md"
-    changelog.parent.mkdir(parents=True, exist_ok=True)
-    if not changelog.exists():
-        changelog.write_text("# Venue Policy Changelog\n\n", encoding="utf-8")
+    summary = refresh_venue_rules(
+        root,
+        venue=venue,
+        year=year,
+        openreview_group=openreview_group,
+        dry_run=dry_run,
+    )
 
-    existing = changelog.read_text(encoding="utf-8")
-    snippet = "- TODO: Refresh venue policy snapshots and rerun regression suite.\n"
-    if snippet not in existing:
-        changelog.write_text(existing + snippet, encoding="utf-8")
-    console.print(f"Updated {changelog}")
+    table = Table(title=f"refresh-venue ({year})")
+    table.add_column("Venue")
+    table.add_column("Status")
+    table.add_column("Group")
+    table.add_column("Warning")
+    for item in summary["items"]:
+        table.add_row(
+            item["venue"],
+            item["status"],
+            item.get("openreview_group_id") or "-",
+            item.get("warning") or "-",
+        )
+    console.print(table)
+    console.print(f"updated_count={summary['updated_count']}, failed_count={summary['failed_count']}")
 
 
 if __name__ == "__main__":

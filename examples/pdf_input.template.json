@@ -1,11 +1,11 @@
-{
+﻿{
   "paper": {
     "format": "pdf",
     "path": "path/to/your-paper.pdf"
   },
   "venue": {
-    "name": "NeurIPS",
-    "year": 2025
+    "name": "ICLR",
+    "year": 2026
   },
   "claims": [
     "Claim 1: your core contribution.",
@@ -24,3 +24,4 @@
     "always_export_pdf": true
   }
 }
+

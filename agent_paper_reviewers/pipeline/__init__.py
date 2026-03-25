@@ -4,6 +4,7 @@ from .step_paper_parser import PaperParserStep
 from .step_claim_normalizer import ClaimNormalizerStep
 from .step_evidence_indexer import EvidenceIndexerStep
 from .step_claim_alignment import ClaimEvidenceAlignerStep
+from .step_citation_graph import CitationGraphStep
 from .step_gap_detector import GapDetectorStep
 from .step_risk_ranker import RiskRankerStep
 from .step_remediation import RemediationPlannerStep
@@ -18,6 +19,7 @@ __all__ = [
     "ClaimNormalizerStep",
     "EvidenceIndexerStep",
     "ClaimEvidenceAlignerStep",
+    "CitationGraphStep",
     "GapDetectorStep",
     "RiskRankerStep",
     "RemediationPlannerStep",

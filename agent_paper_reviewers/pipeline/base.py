@@ -19,6 +19,7 @@ class PipelineContext:
     mcp_tools: "MCPToolProvider | None" = None
     artifacts: dict[str, Any] = field(default_factory=dict)
     qa_issues: list[str] = field(default_factory=list)
+    _qa_issue_seen: set[str] = field(default_factory=set)
     status: RunStatus = RunStatus.SUCCESS
 
     def artifact_path(self, name: str) -> Path:
@@ -29,6 +30,15 @@ class PipelineContext:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
+
+    def add_qa_issue(self, issue: str) -> None:
+        clean = issue.strip()
+        if not clean:
+            return
+        if clean in self._qa_issue_seen:
+            return
+        self._qa_issue_seen.add(clean)
+        self.qa_issues.append(clean)
 
 
 class PipelineStep:

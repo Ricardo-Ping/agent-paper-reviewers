@@ -8,6 +8,7 @@ pipeline_steps:
   - ClaimNormalizer
   - EvidenceIndexer
   - ClaimEvidenceAligner
+  - CitationGraph
   - GapDetector
   - RiskRanker
   - RemediationPlanner

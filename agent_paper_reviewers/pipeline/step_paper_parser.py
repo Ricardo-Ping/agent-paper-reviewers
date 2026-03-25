@@ -30,6 +30,8 @@ class PaperParserStep(PipelineStep):
             "title": structured.get("title", "Untitled"),
             "sections": structured.get("sections", []),
             "raw_text": structured.get("raw_text", ""),
+            "pages": structured.get("pages", []),
+            "parse_backend": structured.get("parse_backend", "markdown"),
             "warnings": warnings,
         }
 

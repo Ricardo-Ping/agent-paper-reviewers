@@ -4,8 +4,8 @@
     "path": "sample_paper.md"
   },
   "venue": {
-    "name": "NeurIPS",
-    "year": 2025
+    "name": "ICLR",
+    "year": 2026
   },
   "claims": [
     "The proposed method improves average benchmark performance by 3.4 points.",
@@ -24,3 +24,4 @@
     "always_export_pdf": true
   }
 }
+

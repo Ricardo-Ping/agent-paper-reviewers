@@ -12,6 +12,7 @@ DEFAULT_STEP_ORDER = [
     "ClaimNormalizer",
     "EvidenceIndexer",
     "ClaimEvidenceAligner",
+    "CitationGraph",
     "GapDetector",
     "RiskRanker",
     "RemediationPlanner",
