@@ -59,6 +59,10 @@ def parse_pdf(path: Path) -> dict:
     if not pages:
         raise RuntimeError("unable_to_parse_pdf_with_available_backends")
 
+    # Enrich page payload with structured table cells when available.
+    # This is useful for downstream evidence indexing of concrete numbers.
+    _merge_pdfplumber_tables(path, pages)
+
     raw = "\n\n".join(page["text"] for page in pages if page["text"].strip())
     sections = _naive_sections_from_text(raw)
     title = _extract_title(raw.splitlines())
@@ -183,7 +187,24 @@ def _extract_with_pdfplumber(path: Path) -> list[dict]:
         with pdfplumber.open(str(path)) as pdf:
             for i, page in enumerate(pdf.pages):
                 text = page.extract_text() or ""
-                pages.append({"page": i + 1, "text": text})
+                tables: list[list[list[str]]] = []
+                try:
+                    for table in page.extract_tables() or []:
+                        cleaned_rows: list[list[str]] = []
+                        if not isinstance(table, list):
+                            continue
+                        for row in table:
+                            if not isinstance(row, list):
+                                continue
+                            cells = [str(cell or "").strip() for cell in row]
+                            if any(cells):
+                                cleaned_rows.append(cells)
+                        if cleaned_rows:
+                            tables.append(cleaned_rows[:32])
+                except Exception:  # noqa: BLE001
+                    tables = []
+
+                pages.append({"page": i + 1, "text": text, "tables": tables})
     except Exception:  # noqa: BLE001
         return []
     return pages
@@ -202,6 +223,49 @@ def _extract_with_pypdf(path: Path) -> list[dict]:
         text = page.extract_text() or ""
         pages.append({"page": i + 1, "text": text})
     return pages
+
+
+def _merge_pdfplumber_tables(path: Path, pages: list[dict]) -> None:
+    if not pages:
+        return
+    if pdfplumber is None:
+        return
+
+    # Skip when pages already carry table payload.
+    if all(isinstance(p.get("tables"), list) for p in pages):
+        return
+
+    try:
+        with pdfplumber.open(str(path)) as pdf:
+            table_map: dict[int, list[list[list[str]]]] = {}
+            for i, page in enumerate(pdf.pages):
+                page_no = i + 1
+                tables: list[list[list[str]]] = []
+                try:
+                    for table in page.extract_tables() or []:
+                        if not isinstance(table, list):
+                            continue
+                        cleaned_rows: list[list[str]] = []
+                        for row in table:
+                            if not isinstance(row, list):
+                                continue
+                            cells = [str(cell or "").strip() for cell in row]
+                            if any(cells):
+                                cleaned_rows.append(cells)
+                        if cleaned_rows:
+                            tables.append(cleaned_rows[:32])
+                except Exception:  # noqa: BLE001
+                    tables = []
+                table_map[page_no] = tables
+
+            for page in pages:
+                page_no = int(page.get("page", 0) or 0)
+                page["tables"] = table_map.get(page_no, [])
+    except Exception:  # noqa: BLE001
+        # Best-effort enrichment only; keep parser robust.
+        for page in pages:
+            if "tables" not in page:
+                page["tables"] = []
 
 
 def _is_heading_line(line: str) -> bool:

@@ -30,6 +30,8 @@ class CitationGraphStep(PipelineStep):
             "semantic_scholar_rate_limited",
             "semantic_scholar_no_search_result",
             "semantic_scholar_request_failed",
+            "semantic_scholar_forbidden_check_api_key_or_quota",
+            "semantic_scholar_status_503",
         )
         if warning.startswith(soft_remote_warnings) and source in {"local_only", "hybrid"} and outgoing_count > 0:
             return False

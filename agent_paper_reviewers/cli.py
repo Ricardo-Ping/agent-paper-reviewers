@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .models import ReviewRunInput
+from .services.feedback_store import submit_feedback
 from .services.venue_sync import refresh_venue_rules
 
 app = typer.Typer(help="agent-paper-reviewers pipeline CLI")
@@ -24,10 +25,10 @@ def doctor() -> None:
     """Check runtime dependencies and external tools."""
     checks = {
         "python": shutil.which("python") is not None,
-        "pandoc": shutil.which("pandoc") is not None,
-        "xelatex": shutil.which("xelatex") is not None,
-        "lualatex": shutil.which("lualatex") is not None,
-        "tectonic": shutil.which("tectonic") is not None,
+        "pandoc (optional: PDF export)": shutil.which("pandoc") is not None,
+        "xelatex (optional: PDF export)": shutil.which("xelatex") is not None,
+        "lualatex (optional: PDF export)": shutil.which("lualatex") is not None,
+        "tectonic (optional: PDF export)": shutil.which("tectonic") is not None,
         "conda": shutil.which("conda") is not None,
     }
 
@@ -112,6 +113,20 @@ def refresh_venue(
         )
     console.print(table)
     console.print(f"updated_count={summary['updated_count']}, failed_count={summary['failed_count']}")
+
+
+@app.command("submit-feedback")
+def submit_feedback_command(
+    input: Path = typer.Option(..., "--input", help="Path to feedback template json"),
+) -> None:
+    """Submit user risk feedback and persist to feedback/<venue>/<year>/."""
+    if not input.exists():
+        raise typer.BadParameter(f"Input file not found: {input}")
+
+    payload = json.loads(input.read_text(encoding="utf-8-sig"))
+    result = submit_feedback(_repo_root(), payload)
+    console.print(f"saved_to: {result['saved_to']}")
+    console.print(f"accepted_items: {result['accepted_items']}")
 
 
 if __name__ == "__main__":

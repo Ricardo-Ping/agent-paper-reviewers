@@ -21,6 +21,8 @@ venv/
 
 # Project run outputs
 output/
+feedback/
+profiles/
 
 # OS / editor
 .DS_Store

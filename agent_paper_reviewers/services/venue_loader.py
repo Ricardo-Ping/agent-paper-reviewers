@@ -104,6 +104,8 @@ def merge_profile_overrides(profile: VenueYearProfile, overrides: dict | None) -
     scoring_axes = list(profile.scoring_axes)
     weights = dict(profile.weights)
     common_reject_reasons = list(profile.common_reject_reasons)
+    required_checks = list(profile.required_checks)
+    required_check_specs = dict(profile.required_check_specs)
 
     override_axes = overrides.get("scoring_axes")
     if isinstance(override_axes, list):
@@ -127,12 +129,31 @@ def merge_profile_overrides(profile: VenueYearProfile, overrides: dict | None) -
         if cleaned_reasons:
             common_reject_reasons = list(dict.fromkeys(cleaned_reasons + common_reject_reasons))[:10]
 
+    override_required_checks = overrides.get("required_checks")
+    if isinstance(override_required_checks, list):
+        cleaned_checks = [str(x).strip() for x in override_required_checks if str(x).strip()]
+        if cleaned_checks:
+            required_checks = list(dict.fromkeys(cleaned_checks))
+
+    override_required_specs = overrides.get("required_check_specs")
+    if isinstance(override_required_specs, dict):
+        merged_specs = dict(required_check_specs)
+        for key, value in override_required_specs.items():
+            k = str(key).strip()
+            if not k:
+                continue
+            if isinstance(value, dict):
+                merged_specs[k] = value
+        required_check_specs = merged_specs
+
     return VenueYearProfile(
         scoring_axes=scoring_axes,
         weights=weights,
         common_reject_reasons=common_reject_reasons,
-        required_checks=profile.required_checks,
+        required_checks=required_checks,
+        required_check_specs=required_check_specs,
         rebuttal_policy=profile.rebuttal_policy,
+        decision_policy=profile.decision_policy,
         openreview_group_id=profile.openreview_group_id,
         version_date=profile.version_date,
     )

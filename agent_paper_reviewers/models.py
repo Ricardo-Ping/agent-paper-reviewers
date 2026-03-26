@@ -26,6 +26,12 @@ class MCPBackend(str, Enum):
     DISABLED = "disabled"
 
 
+class ManuscriptStage(str, Enum):
+    INITIAL_SUBMISSION = "initial_submission"
+    REJECTED_AFTER_REVIEWS = "rejected_after_reviews"
+    META_REVIEW_DISCUSSION = "meta_review_discussion"
+
+
 class PaperInput(BaseModel):
     format: str = Field(pattern=r"^(pdf|md)$")
     path: str
@@ -47,20 +53,55 @@ class RunOptions(BaseModel):
     language_mode: LanguageMode = LanguageMode.EN
     executor_backend: ExecutorBackend = ExecutorBackend.CODEX
     mcp_backend: MCPBackend = MCPBackend.HTTP
-    always_export_pdf: bool = True
+    always_export_pdf: bool = False
+
+
+class ProfileInput(BaseModel):
+    author_hash: str = ""
+    author_id: str = ""
+
+
+class ReviewerComment(BaseModel):
+    review_id: str = ""
+    concern: str
+
+
+class ReviewContextInput(BaseModel):
+    manuscript_stage: ManuscriptStage = ManuscriptStage.INITIAL_SUBMISSION
+    reviewer_comments: list[ReviewerComment] = Field(default_factory=list)
+    note: str = ""
 
 
 class ReviewRunInput(BaseModel):
     paper: PaperInput
     venue: VenueInput
-    claims: list[str] = Field(min_length=1)
+    claims: list[str] = Field(default_factory=list)
     constraints: Constraints = Field(default_factory=Constraints)
     options: RunOptions = Field(default_factory=RunOptions)
+    profile: ProfileInput = Field(default_factory=ProfileInput)
+    review_context: ReviewContextInput = Field(default_factory=ReviewContextInput)
 
     @model_validator(mode="after")
     def normalize(self) -> "ReviewRunInput":
         self.venue.name = self.venue.name.strip()
         self.claims = [c.strip() for c in self.claims if c.strip()]
+        self.profile.author_hash = self.profile.author_hash.strip()
+        self.profile.author_id = self.profile.author_id.strip()
+        self.review_context.note = self.review_context.note.strip()
+
+        cleaned_comments: list[ReviewerComment] = []
+        for idx, item in enumerate(self.review_context.reviewer_comments, start=1):
+            concern = str(item.concern or "").strip()
+            if not concern:
+                continue
+            review_id = str(item.review_id or "").strip() or f"R{idx}"
+            cleaned_comments.append(
+                ReviewerComment(
+                    review_id=review_id,
+                    concern=concern,
+                )
+            )
+        self.review_context.reviewer_comments = cleaned_comments
         return self
 
 
@@ -74,12 +115,39 @@ class RebuttalPolicy(BaseModel):
     dynamic_from_openreview: bool = False
 
 
+class DecisionPolicy(BaseModel):
+    strictness_tier: str = "default"
+    p0_not_ready: bool = True
+    p1_not_ready_threshold: int = 99
+    p1_borderline_threshold: int = 3
+    min_overall_ready: float = 6.0
+    min_overall_borderline: float = 5.2
+    notes: str = ""
+
+
+class RequiredCheckSpec(BaseModel):
+    check_name: str = ""
+    gap_code: str = ""
+    description: str = ""
+    severity_hint: str = "P2"
+    keywords: list[str] = Field(default_factory=list)
+    min_hits: int = 1
+    min_distinct_sections: int = 0
+    min_citation_outgoing: int = 0
+    min_citation_baseline_like: int = 0
+    min_citation_top_venue: int = 0
+    min_citation_top_venue_recent: int = 0
+    notes: str = ""
+
+
 class VenueYearProfile(BaseModel):
     scoring_axes: list[str]
     weights: dict[str, float]
     common_reject_reasons: list[str]
     required_checks: list[str]
+    required_check_specs: dict[str, RequiredCheckSpec] = Field(default_factory=dict)
     rebuttal_policy: RebuttalPolicy
+    decision_policy: DecisionPolicy = Field(default_factory=DecisionPolicy)
     openreview_group_id: str = ""
     version_date: str
 
@@ -154,6 +222,7 @@ class RebuttalItem(BaseModel):
 class RebuttalBundle(BaseModel):
     venue: str
     year: int
+    manuscript_stage: str = ManuscriptStage.INITIAL_SUBMISSION.value
     mode: str
     items: list[RebuttalItem]
     global_response: str | None
@@ -193,6 +262,9 @@ class RunSummary(BaseModel):
     status: RunStatus
     output_dir: str
     qa_issues: list[str] = Field(default_factory=list)
+    step_statuses: list[dict[str, Any]] = Field(default_factory=list)
+    produced_artifacts: list[str] = Field(default_factory=list)
+    historical_profile: dict[str, Any] = Field(default_factory=dict)
 
 
 def ensure_path(value: str | Path) -> Path:

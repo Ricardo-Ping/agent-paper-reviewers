@@ -18,11 +18,123 @@ profile:
   - Experimental evaluation lacks scale, workload diversity, or strong baselines.
   - Reproducibility details for system implementation and configuration are incomplete.
   required_checks:
+  - contribution_alignment
   - baseline_coverage
+  - baseline_config_fairness
+  - workload_diversity
+  - scalability_evaluation
+  - efficiency_tradeoff_reporting
   - statistical_significance
   - ablation_completeness
   - reproducibility_details
+  - system_setting_reproducibility
+  - failure_case_analysis
+  - top_venue_related_work_coverage
   - practical_impact
+  required_check_specs:
+    contribution_alignment:
+      check_name: contribution_alignment
+      gap_code: missing_contribution_alignment
+      description: Contribution statement and novelty positioning are not explicit enough for database reviewers.
+      severity_hint: P1
+      keywords:
+      - contribution
+      - we propose
+      - novelty
+      - compared with prior work
+      min_hits: 2
+      min_distinct_sections: 1
+    baseline_coverage:
+      check_name: baseline_coverage
+      gap_code: missing_baseline
+      description: Core comparisons should include strong classical and recent system baselines.
+      severity_hint: P1
+      keywords:
+      - baseline
+      - comparison
+      - state-of-the-art
+      - prior system
+      min_hits: 3
+      min_distinct_sections: 2
+      min_citation_baseline_like: 2
+    baseline_config_fairness:
+      check_name: baseline_config_fairness
+      gap_code: missing_baseline_fairness
+      description: Baseline tuning fairness and matched budget/hardware are not clearly documented.
+      severity_hint: P1
+      keywords:
+      - same hardware
+      - same budget
+      - tuned baseline
+      - fair comparison
+      min_hits: 2
+      min_distinct_sections: 1
+    workload_diversity:
+      check_name: workload_diversity
+      gap_code: missing_workload_diversity
+      description: Workload coverage should span representative OLTP/OLAP patterns or benchmark families.
+      severity_hint: P1
+      keywords:
+      - workload
+      - benchmark
+      - trace
+      - oltp
+      - olap
+      - tpc
+      min_hits: 3
+      min_distinct_sections: 1
+    scalability_evaluation:
+      check_name: scalability_evaluation
+      gap_code: missing_scalability_evaluation
+      description: Scalability must be evaluated across data scale or cluster/node scale.
+      severity_hint: P1
+      keywords:
+      - scalability
+      - data size
+      - cluster size
+      - scale up
+      - scale-out
+      min_hits: 2
+      min_distinct_sections: 1
+    efficiency_tradeoff_reporting:
+      check_name: efficiency_tradeoff_reporting
+      gap_code: missing_efficiency_tradeoff
+      description: Throughput-latency-resource trade-offs should be explicitly reported.
+      severity_hint: P1
+      keywords:
+      - throughput
+      - latency
+      - runtime
+      - memory
+      - overhead
+      - cost
+      min_hits: 3
+      min_distinct_sections: 1
+    system_setting_reproducibility:
+      check_name: system_setting_reproducibility
+      gap_code: missing_system_setting_reproducibility
+      description: Hardware/software/environment settings are insufficient for system-level reproduction.
+      severity_hint: P1
+      keywords:
+      - hardware
+      - db version
+      - configuration
+      - environment
+      - parameter setting
+      min_hits: 3
+      min_distinct_sections: 1
+    top_venue_related_work_coverage:
+      check_name: top_venue_related_work_coverage
+      gap_code: missing_top_venue_related_work_coverage
+      description: Related work should include enough recent top-venue DB/Sys references.
+      severity_hint: P1
+      keywords:
+      - related work
+      - references
+      - state-of-the-art
+      min_hits: 1
+      min_citation_top_venue: 4
+      min_citation_top_venue_recent: 2
   rebuttal_policy:
     mode: per_review_only
     per_review_char_limit: 2500
@@ -31,5 +143,13 @@ profile:
     attachment_page_limit: 0
     allow_links: false
     dynamic_from_openreview: false
+  decision_policy:
+    strictness_tier: medium_competition
+    p0_not_ready: true
+    p1_not_ready_threshold: 4
+    p1_borderline_threshold: 2
+    min_overall_ready: 6.5
+    min_overall_borderline: 5.8
+    notes: Strong systems venue; requires balanced novelty and evaluation rigor.
   openreview_group_id: ''
   version_date: '2026-03-25'

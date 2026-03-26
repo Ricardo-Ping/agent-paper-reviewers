@@ -147,7 +147,7 @@ class RemediationPlannerStep(PipelineStep):
 
             protocol = item.get("protocol")
             if not isinstance(protocol, list) or not protocol:
-                protocol = self._default_protocol(risk_id, gaps)
+                protocol = self._default_protocol(risk_id, gaps, risk_reason="")
 
             task = ExperimentTask(
                 id=str(item.get("id") or f"EXP-{idx:03d}"),
@@ -221,13 +221,56 @@ class RemediationPlannerStep(PipelineStep):
         return "medium"
 
     @staticmethod
-    def _default_protocol(risk_id: str, gaps: list[dict]) -> list[str]:
+    def _default_protocol(risk_id: str, gaps: list[dict], risk_reason: str = "") -> list[str]:
+        reason = risk_reason.lower()
+        if any(k in reason for k in ["contradiction", "conflict", "opposite result", "inconsistent with claim"]):
+            return [
+                f"Build contradiction-resolution checklist for {risk_id}.",
+                "Locate conflicting figure/table anchors and verify metric direction (higher/lower is better).",
+                "Split claim into scoped sub-claims that exactly match reported settings and datasets.",
+                "Add reconciled result table with explicit why/when we lose to baseline analysis.",
+            ]
+        if "baseline" in reason:
+            return [
+                f"Define fair-comparison protocol for {risk_id} (matched training budget/hardware).",
+                "Add at least two strong baselines and report full metric table.",
+                "Document baseline tuning strategy and fairness constraints.",
+                "Explain wins/losses by scenario with failure cases.",
+            ]
+        if any(k in reason for k in ["significance", "statistical", "confidence interval", "p-value"]):
+            return [
+                f"Set statistical validation protocol for {risk_id}.",
+                "Run >=3 seeds for each compared method and report mean/std.",
+                "Apply paired significance tests on primary metrics and report p-values.",
+                "Add confidence intervals and variance-aware interpretation.",
+            ]
+        if "ablation" in reason:
+            return [
+                f"Define component attribution targets for {risk_id}.",
+                "Add one-by-one component ablation table.",
+                "Add interaction ablations for key component pairs.",
+                "Discuss causal interpretation and failure patterns.",
+            ]
+        if any(k in reason for k in ["reproduc", "implementation", "environment"]):
+            return [
+                f"Create reproducibility checklist for {risk_id}.",
+                "Release full hyperparameters, data preprocessing, and environment settings.",
+                "Provide deterministic rerun commands and seed policy.",
+                "Validate one independent rerun and report drift tolerance.",
+            ]
+        if any(k in reason for k in ["citation", "related work", "top-venue"]):
+            return [
+                f"Build related-work expansion checklist for {risk_id}.",
+                "Add recent top-venue papers from last 2-3 years and closest baselines.",
+                "Add explicit novelty positioning table (ours vs prior).",
+                "Tie each core claim to at least one directly comparable prior method.",
+            ]
         gap_hints = [g.get("description", "") for g in gaps[:2]]
         protocol = [
             f"Define hypothesis and acceptance metric for {risk_id}.",
-            "Run controlled comparison against strongest baselines under matched settings.",
-            "Report multi-seed mean/std and significance tests.",
-            "Add failure-case and limitations analysis linked to reviewer concerns.",
+            "Design one targeted experiment that directly validates the questioned claim.",
+            "Report both aggregate metrics and error/failure breakdown.",
+            "Add explicit paper-change mapping from new evidence to claim statement.",
         ]
         if gap_hints:
             protocol.append(f"Address identified gap explicitly: {gap_hints[0]}")
@@ -239,20 +282,43 @@ class RemediationPlannerStep(PipelineStep):
             severity = str(risk.get("severity", "P2"))
             effort = "L" if severity == "P0" else "M" if severity == "P1" else "S"
             priority = "high" if severity in {"P0", "P1"} else "medium"
+            reason = str(risk.get("reason", ""))
+            title = self._default_task_title(str(risk.get("id") or f"RISK-{idx:03d}"), reason)
             task = ExperimentTask(
                 id=f"EXP-{idx:03d}",
                 risk_id=str(risk.get("id") or f"RISK-{idx:03d}"),
-                title=f"Mitigate {risk.get('id', f'RISK-{idx:03d}')} - {severity} risk",
+                title=title,
                 priority=priority,
                 effort=effort,
                 est_time_days=4.0 if effort == "L" else 2.0 if effort == "M" else 1.0,
                 est_gpu_hours=36 if effort == "L" else 14 if effort == "M" else 4,
                 expected_gain="Reduce rejection likelihood by strengthening claim-evidence linkage.",
-                protocol=self._default_protocol(str(risk.get("id") or f"RISK-{idx:03d}"), gaps),
+                protocol=self._default_protocol(
+                    str(risk.get("id") or f"RISK-{idx:03d}"),
+                    gaps,
+                    risk_reason=reason,
+                ),
             )
             tasks.append(task.model_dump())
 
         return tasks
+
+    @staticmethod
+    def _default_task_title(risk_id: str, reason: str) -> str:
+        lower = reason.lower()
+        if any(k in lower for k in ["contradiction", "conflict", "opposite result", "inconsistent with claim"]):
+            return f"Resolve Claim-Result Contradictions for {risk_id}"
+        if "baseline" in lower:
+            return f"Strengthen Baseline Fairness for {risk_id}"
+        if any(k in lower for k in ["significance", "statistical", "p-value"]):
+            return f"Add Statistical Validation Suite for {risk_id}"
+        if "ablation" in lower:
+            return f"Complete Component Ablation Matrix for {risk_id}"
+        if "reproduc" in lower:
+            return f"Build Reproducibility Package for {risk_id}"
+        if any(k in lower for k in ["citation", "related work", "top-venue"]):
+            return f"Expand Related Work Positioning for {risk_id}"
+        return f"Targeted Claim Validation for {risk_id}"
 
     def _enforce_constraints(self, tasks: list[dict], constraints: Constraints, risks: list[dict]) -> list[dict]:
         max_n = max(0, int(constraints.max_new_experiments))

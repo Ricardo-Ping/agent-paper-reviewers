@@ -13,15 +13,25 @@ class GapDetectorStep(PipelineStep):
     def run(self, ctx: PipelineContext) -> None:
         raw_text = ctx.artifacts["paper_structured"].get("raw_text", "").lower()
         passages = ctx.artifacts["evidence_index"].get("passages", [])
-        required_checks = ctx.artifacts["venue_profile"]["profile"].get("required_checks", [])
+        venue_profile = ctx.artifacts["venue_profile"]["profile"]
+        required_checks = venue_profile.get("required_checks", [])
+        required_check_specs = venue_profile.get("required_check_specs", {})
         alignments = ctx.artifacts["claim_evidence_matrix"]["alignments"]
         citation_graph = ctx.artifacts.get("citation_graph", {})
 
         gaps: list[dict] = []
         seen_codes: set[str] = set()
+        check_outcomes: list[dict] = []
 
         for check_name in required_checks:
-            outcome = self._evaluate_required_check(check_name, raw_text, passages)
+            outcome = self._evaluate_required_check(
+                check_name,
+                raw_text,
+                passages,
+                citation_graph=citation_graph,
+                check_specs=required_check_specs,
+            )
+            check_outcomes.append(outcome)
             if outcome["passed"]:
                 continue
 
@@ -55,6 +65,38 @@ class GapDetectorStep(PipelineStep):
                 ).model_dump()
             )
 
+        contradiction_claims = [
+            a
+            for a in alignments
+            if float(a.get("contradiction_score", 0.0) or 0.0) >= 0.55
+        ]
+        if contradiction_claims:
+            refs = []
+            claim_ids: list[str] = []
+            max_score = 0.0
+            for claim in contradiction_claims[:3]:
+                claim_ids.append(str(claim.get("claim_id", "")))
+                max_score = max(max_score, float(claim.get("contradiction_score", 0.0) or 0.0))
+                rows = claim.get("contradictory_evidence_refs", [])
+                if isinstance(rows, list):
+                    for ref in rows[:1]:
+                        try:
+                            refs.append(EvidenceRef.model_validate(ref))
+                        except Exception:  # noqa: BLE001
+                            continue
+            severity = "P0" if max_score >= 0.72 else "P1"
+            gaps.append(
+                GapItem(
+                    code="claim_evidence_contradiction",
+                    severity_hint=severity,
+                    description=(
+                        "Detected potential claim-result contradiction: one or more evidence anchors "
+                        f"appear to conflict with claim direction ({', '.join([c for c in claim_ids if c])})."
+                    ),
+                    evidence_refs=refs[:2],
+                ).model_dump()
+            )
+
         citation_gaps = self._collect_citation_gaps(citation_graph, passages)
         gaps.extend(citation_gaps)
 
@@ -73,6 +115,8 @@ class GapDetectorStep(PipelineStep):
         payload = {
             "gaps": dedup,
             "required_checks": required_checks,
+            "required_check_specs": required_check_specs if isinstance(required_check_specs, dict) else {},
+            "required_check_outcomes": check_outcomes,
             "alignment_strength_distribution": dict(
                 Counter(a.get("strength", "None") for a in alignments)
             ),
@@ -81,10 +125,18 @@ class GapDetectorStep(PipelineStep):
         ctx.artifacts["gaps"] = payload
         ctx.dump_json("artifacts/gaps.json", payload)
 
-    def _evaluate_required_check(self, check_name: str, raw_text: str, passages: list[dict]) -> dict:
+    def _evaluate_required_check(
+        self,
+        check_name: str,
+        raw_text: str,
+        passages: list[dict],
+        *,
+        citation_graph: dict | None = None,
+        check_specs: dict | None = None,
+    ) -> dict:
         normalized = str(check_name).strip().lower()
 
-        check_specs = {
+        default_specs = {
             "baseline_coverage": {
                 "gap_code": "missing_baseline",
                 "keywords": ["baseline", "sota", "comparison", "compared with", "state-of-the-art"],
@@ -176,6 +228,85 @@ class GapDetectorStep(PipelineStep):
                 "severity_hint": "P2",
                 "min_hits": 1,
             },
+            "baseline_config_fairness": {
+                "gap_code": "missing_baseline_fairness",
+                "keywords": [
+                    "fair comparison",
+                    "matched settings",
+                    "same hardware",
+                    "same budget",
+                    "same training budget",
+                    "tuned baseline",
+                ],
+                "description": "Baseline fairness and matched experimental settings are not explicit enough.",
+                "severity_hint": "P1",
+                "min_hits": 1,
+            },
+            "workload_diversity": {
+                "gap_code": "missing_workload_diversity",
+                "keywords": [
+                    "workload",
+                    "benchmark",
+                    "tpc",
+                    "ycsb",
+                    "query set",
+                    "oltp",
+                    "olap",
+                    "trace",
+                ],
+                "description": "Workload diversity looks insufficient for database/system-style evaluation.",
+                "severity_hint": "P1",
+                "min_hits": 2,
+            },
+            "scalability_evaluation": {
+                "gap_code": "missing_scalability_evaluation",
+                "keywords": [
+                    "scalability",
+                    "scale-out",
+                    "scale up",
+                    "data size",
+                    "cluster size",
+                    "number of nodes",
+                    "strong scaling",
+                    "weak scaling",
+                ],
+                "description": "Scalability evaluation appears weak or missing.",
+                "severity_hint": "P1",
+                "min_hits": 1,
+            },
+            "efficiency_tradeoff_reporting": {
+                "gap_code": "missing_efficiency_tradeoff",
+                "keywords": [
+                    "latency",
+                    "throughput",
+                    "qps",
+                    "runtime",
+                    "memory",
+                    "cpu",
+                    "overhead",
+                    "cost",
+                ],
+                "description": "Efficiency and cost/performance trade-off reporting appears insufficient.",
+                "severity_hint": "P1",
+                "min_hits": 2,
+            },
+            "system_setting_reproducibility": {
+                "gap_code": "missing_system_setting_reproducibility",
+                "keywords": [
+                    "hardware",
+                    "gpu",
+                    "cpu",
+                    "ram",
+                    "db version",
+                    "database version",
+                    "configuration",
+                    "parameter setting",
+                    "environment",
+                ],
+                "description": "System settings and environment details are not reproducible enough.",
+                "severity_hint": "P1",
+                "min_hits": 2,
+            },
             "ethics_limitations": {
                 "gap_code": "missing_ethics_limitations",
                 "keywords": ["ethics", "societal impact", "bias", "safety"],
@@ -197,11 +328,26 @@ class GapDetectorStep(PipelineStep):
                 "severity_hint": "P2",
                 "min_hits": 1,
             },
+            "top_venue_related_work_coverage": {
+                "gap_code": "missing_top_venue_related_work_coverage",
+                "keywords": ["related work", "references", "state-of-the-art"],
+                "description": "Related work appears to under-cover recent top-venue papers relevant to this topic.",
+                "severity_hint": "P1",
+                "min_hits": 1,
+                "min_citation_top_venue": 4,
+                "min_citation_top_venue_recent": 2,
+            },
         }
 
-        spec = check_specs.get(normalized)
-        if spec is None:
+        spec = default_specs.get(normalized, {}).copy()
+        if isinstance(check_specs, dict):
+            venue_spec = check_specs.get(normalized)
+            if isinstance(venue_spec, dict):
+                spec.update(venue_spec)
+
+        if not spec:
             spec = {
+                "check_name": normalized,
                 "gap_code": f"missing_{normalized}",
                 "keywords": [normalized.replace("_", " ")],
                 "description": f"Evidence for required check '{check_name}' appears insufficient.",
@@ -209,20 +355,65 @@ class GapDetectorStep(PipelineStep):
                 "min_hits": 1,
             }
 
-        hits = self._count_hits(raw_text, passages, spec["keywords"])
-        passed = hits >= int(spec["min_hits"])
+        keywords = spec.get("keywords", [])
+        if not isinstance(keywords, list) or not keywords:
+            keywords = [normalized.replace("_", " ")]
+        keywords = [str(x).strip().lower() for x in keywords if str(x).strip()]
+
+        hits, distinct_sections = self._count_hits(raw_text, passages, keywords)
+        min_hits = int(spec.get("min_hits", 1) or 1)
+        min_distinct_sections = int(spec.get("min_distinct_sections", 0) or 0)
+
+        stats = citation_graph.get("stats", {}) if isinstance(citation_graph, dict) else {}
+        outgoing_count = int(stats.get("outgoing_count", 0) or 0)
+        baseline_like_count = int(stats.get("baseline_like_reference_count", 0) or 0)
+        top_venue_count = int(stats.get("top_venue_reference_count", 0) or 0)
+        recent_top_venue_count = int(stats.get("recent_top_venue_reference_count", 0) or 0)
+
+        min_citation_outgoing = int(spec.get("min_citation_outgoing", 0) or 0)
+        min_citation_baseline_like = int(spec.get("min_citation_baseline_like", 0) or 0)
+        min_citation_top_venue = int(spec.get("min_citation_top_venue", 0) or 0)
+        min_citation_top_venue_recent = int(spec.get("min_citation_top_venue_recent", 0) or 0)
+
+        passed = hits >= min_hits
+        passed = passed and distinct_sections >= min_distinct_sections
+        passed = passed and outgoing_count >= min_citation_outgoing
+        passed = passed and baseline_like_count >= min_citation_baseline_like
+        passed = passed and top_venue_count >= min_citation_top_venue
+        passed = passed and recent_top_venue_count >= min_citation_top_venue_recent
+
         return {
             "passed": passed,
-            "gap_code": spec["gap_code"],
-            "keywords": spec["keywords"],
-            "description": spec["description"],
-            "severity_hint": spec["severity_hint"],
+            "check_name": normalized,
+            "gap_code": str(spec.get("gap_code") or f"missing_{normalized}"),
+            "keywords": keywords,
+            "description": str(
+                spec.get("description")
+                or f"Evidence for required check '{check_name}' appears insufficient."
+            ),
+            "severity_hint": str(spec.get("severity_hint") or "P2"),
             "hits": hits,
+            "distinct_sections": distinct_sections,
+            "thresholds": {
+                "min_hits": min_hits,
+                "min_distinct_sections": min_distinct_sections,
+                "min_citation_outgoing": min_citation_outgoing,
+                "min_citation_baseline_like": min_citation_baseline_like,
+                "min_citation_top_venue": min_citation_top_venue,
+                "min_citation_top_venue_recent": min_citation_top_venue_recent,
+            },
+            "citation_stats": {
+                "outgoing_count": outgoing_count,
+                "baseline_like_reference_count": baseline_like_count,
+                "top_venue_reference_count": top_venue_count,
+                "recent_top_venue_reference_count": recent_top_venue_count,
+            },
         }
 
     @staticmethod
-    def _count_hits(raw_text: str, passages: list[dict], keywords: list[str]) -> int:
+    def _count_hits(raw_text: str, passages: list[dict], keywords: list[str]) -> tuple[int, int]:
         hits = 0
+        sections: set[str] = set()
         for keyword in keywords:
             if keyword in raw_text:
                 hits += 1
@@ -232,7 +423,10 @@ class GapDetectorStep(PipelineStep):
             text = str(passage.get("text") or "").lower()
             if any(k in text for k in keywords):
                 hits += 1
-        return hits
+                section = str(passage.get("section") or "").strip().lower()
+                if section:
+                    sections.add(section)
+        return hits, len(sections)
 
     @staticmethod
     def _probe_refs(passages: list[dict], keywords: list[str]) -> list[EvidenceRef]:
@@ -276,6 +470,10 @@ class GapDetectorStep(PipelineStep):
         incoming_count = int(stats.get("incoming_count", 0) or 0)
         baseline_like_count = int(stats.get("baseline_like_reference_count", 0) or 0)
         source = str(citation_graph.get("source", "none"))
+        top_venue_count = int(stats.get("top_venue_reference_count", 0) or 0)
+        recent_top_venue_count = int(stats.get("recent_top_venue_reference_count", 0) or 0)
+        novelty_signal_score = float(stats.get("novelty_signal_score", 0.0) or 0.0)
+        content_novelty_score = float(stats.get("content_novelty_score", 0.0) or 0.0)
 
         gaps: list[dict] = []
 
@@ -289,6 +487,21 @@ class GapDetectorStep(PipelineStep):
                     severity_hint="P1",
                     description=(
                         "Citation coverage appears shallow; references may be insufficient to position novelty and baselines."
+                    ),
+                    evidence_refs=refs,
+                ).model_dump()
+            )
+
+        if outgoing_count >= 8 and (top_venue_count < 3 or recent_top_venue_count < 2):
+            refs = self._citation_refs(citation_graph, relation="outgoing")
+            if not refs:
+                refs = self._probe_refs(passages, ["related work", "references", "state-of-the-art", "benchmark"])
+            gaps.append(
+                GapItem(
+                    code="missing_top_venue_recent_coverage",
+                    severity_hint="P2",
+                    description=(
+                        "Reference list seems to under-cover recent top-venue work; novelty positioning may be incomplete."
                     ),
                     evidence_refs=refs,
                 ).model_dump()
@@ -316,19 +529,20 @@ class GapDetectorStep(PipelineStep):
         current_year = datetime.now().year
         if source in {"semantic_scholar", "hybrid", "semantic_scholar_search_only"}:
             if paper_year is not None and current_year - paper_year >= 2 and incoming_count == 0:
-                refs = self._citation_refs(citation_graph, relation="incoming")
-                if not refs:
-                    refs = self._probe_refs(passages, ["contribution", "novel", "state of the art"])
-                gaps.append(
-                    GapItem(
-                        code="weak_novelty_signal_from_citations",
-                        severity_hint="P2",
-                        description=(
-                            "Incoming citation signal is weak for a non-recent paper; novelty impact may need stronger justification."
-                        ),
-                        evidence_refs=refs,
-                    ).model_dump()
-                )
+                if novelty_signal_score < 0.42 and content_novelty_score < 0.55:
+                    refs = self._citation_refs(citation_graph, relation="incoming")
+                    if not refs:
+                        refs = self._probe_refs(passages, ["contribution", "novel", "state of the art"])
+                    gaps.append(
+                        GapItem(
+                            code="weak_novelty_signal_from_citations",
+                            severity_hint="P2",
+                            description=(
+                                "Incoming citation signal is weak for a non-recent paper, and paper-content novelty signals are also limited; novelty impact may need stronger justification."
+                            ),
+                            evidence_refs=refs,
+                        ).model_dump()
+                    )
 
         return gaps
 

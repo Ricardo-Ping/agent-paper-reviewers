@@ -17,12 +17,15 @@
 - 生成风险分级（P0/P1/P2）与拒稿话术。
 - 生成补救实验计划（优先级、工作量、预期收益）。
 - 生成 rebuttal 初稿（按 reviewer concern 逐条回应）。
+- 当你不确定投稿会议时，基于论文内容反向推荐 Top venue（匹配分 + 依据 + 主要缺口）。
+- 增加评分杠杆分析（哪个维度最拖后腿、先改哪一维度能最快提高 overall）。
 - 按配置导出单语或双语产物（`en` / `en_zh`）。
 
 ## 架构思路
 - Skill 驱动流程：流程顺序由 `agent-paper-reviewers-skill/flow_config.yaml` 定义。
 - MCP 提供工具能力：例如 OpenReview 规则解析能力通过 MCP provider 注入。
 - Executor 可插拔：支持 `codex|agent_api|openai|anthropic|qwen|local_vllm`。
+- 未知会议自动降级：本地 `_fallback` 规则 -> OpenReview 动态发现 -> executor 自举规则草案（三层回退）。
 
 ## 给 Agent 的一句话指令
 可以直接对 Agent 说：
@@ -47,7 +50,7 @@
 - 操作系统：Windows / Linux（GPU 推理建议 Linux + CUDA 12.1）。
 - Python：`3.11.x`。
 - 包管理：Conda（推荐）。
-- PDF 导出：`pandoc` + (`xelatex` 或 `lualatex` 或 `tectonic`)。
+- PDF 导出（可选）：`pandoc` + (`xelatex` 或 `lualatex` 或 `tectonic`)。
 - 可选网络：用于 OpenReview 动态规则解析与在线翻译回退。
 
 ## 安装
@@ -80,6 +83,14 @@ pip install -e .
 python -m agent_paper_reviewers.cli doctor
 ```
 
+### 5. （可选）启用 PDF 导出工具链
+默认环境不安装 PDF 工具链。只有在你需要 `*.pdf` 时再安装：
+```bash
+conda install -n agent-paper-reviewers-cpu -c conda-forge pandoc tectonic
+# 或者安装到 GPU 环境
+conda install -n agent-paper-reviewers-gpu -c conda-forge pandoc tectonic
+```
+
 ## 5 分钟跑通
 ```bash
 python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output
@@ -108,6 +119,17 @@ python -m agent_paper_reviewers.cli run --input examples/sql_translation_gpu_inp
 也可以用模板文件：
 - `examples/pdf_input.template.json`
 
+如果你暂时不确定该投哪个会议，可以先跑“会议推荐”示例：
+```bash
+python -m agent_paper_reviewers.cli run --input examples/venue_recommend_input.json --output-dir output
+```
+该示例会输出 `venue_recommendations.json`，并在 `decision_brief/full_review` 中追加推荐会议与理由。
+
+如果你处于审稿讨论期（已有 R1/R2/R3 意见），可用模板直接跑“讨论期模式”：
+```bash
+python -m agent_paper_reviewers.cli run --input examples/meta_review_input.template.json --output-dir output
+```
+
 运行结束后，结果会写到：
 ```text
 output/<paper_title>/
@@ -119,12 +141,20 @@ output/<paper_title>/
 `examples/sample_input.json` 结构如下：
 - `paper`: 论文格式与路径（`pdf|md`）。
 - `venue`: 会议名称与年份。
-- `claims`: 核心主张列表。
+- `claims`: 核心主张列表（可为空；为空时会自动从摘要/贡献/结论段落发现候选主张）。
+  - 当你不确定目标会议时，可先填占位会议名（如 `UnknownConf`），系统仍会输出 `venue_recommendations` 供你反向选会。
+- `review_context.manuscript_stage`: 稿件阶段（关键分流开关）
+  - `initial_submission`: 初次投稿前，关注“现在要不要投”
+  - `rejected_after_reviews`: 已拒稿后，关注“能否挽救并复投”
+  - `meta_review_discussion`: 讨论期，关注“逐条回应 reviewer concern”
+- `review_context.reviewer_comments`: 可选审稿意见列表（`review_id + concern`），用于讨论期/拒稿后模式的风险重排和 rebuttal 对齐。
 - `constraints`: 时间、GPU、最多补实验数等资源边界。
 - `options.language_mode`: `en` 或 `en_zh`。
 - `options.executor_backend`: 执行器后端。
 - `options.mcp_backend`: `http` 或 `disabled`。
-- `options.always_export_pdf`: 是否强制导出 PDF。
+- `options.always_export_pdf`: 是否导出 PDF（默认 `false`，仅输出 `md+json`）。
+- `profile.author_hash` / `profile.author_id`: 可选投稿者标识（用于历史画像累计；`author_id` 会在本地转 hash）。
+  - 未提供作者标识时，系统仍会按 `venue+year` 累计公共弱项画像。
 
 ## 执行器后端（真实调用）
 - `agent_api`：`OpenClawNodeExecutor`，调用 `OpenClaw /api/sessions/spawn`。
@@ -141,39 +171,74 @@ output/<paper_title>/
 - `QWEN_API_KEY` / `QWEN_BASE_URL`
 - `LOCAL_VLLM_BASE_URL` / `LOCAL_VLLM_API_KEY`
 - `SEMANTIC_SCHOLAR_API_KEY`（用于 Citation Graph，避免匿名限流）
+- `AGENT_PAPER_REVIEWERS_PROFILE_ROOT`（可选，覆盖默认 `./profiles` 历史画像存储目录）
 
 ## 输出文件说明
 ### 核心报告
-- `decision_brief.en.md/json/pdf`: 短版决策报告（投稿建议 + Top 风险 + 必补实验）。
-- `full_review.en.md/json/pdf`: 长版评审报告（逐条风险、证据对齐、修复建议）。
-- `rebuttal.en.md/json/pdf`: rebuttal 草稿包（按 reviewer concern 组织）。
+- `decision_brief.en.md/json`: 短版决策报告（投稿建议 + Top 风险 + 必补实验 + 各评分解释）。
+- `full_review.en.md/json`: 长版评审报告（逐条风险、证据对齐、修复建议 + 各评分解释）。
+  - 内含 `score_leverage_analysis`（维度权重、当前贡献、目标缺口、最快提升维度）。
+- `diagnosis_report.en.md/json`: 面向研究生可读的诊断报告（问题 -> 原因 -> 修复 -> 影响解释）。
+- `rebuttal.en.md/json`: rebuttal 草稿包（按 reviewer concern 组织）。
+  - 现在会显式写入 `manuscript_stage`，并在讨论期优先按 `review_context.reviewer_comments` 逐条生成。
+- 当 `options.always_export_pdf=true` 时，额外导出对应 `*.pdf` 文件。
 
 ### 双语镜像
 - 当 `language_mode=en_zh` 时，额外生成：
-- `decision_brief.zh.md/json/pdf`
-- `full_review.zh.md/json/pdf`
-- `rebuttal.zh.md/json/pdf`
+- `decision_brief.zh.md/json`
+- `full_review.zh.md/json`
+- `diagnosis_report.zh.md/json`
+- `rebuttal.zh.md/json`
+- 当 `options.always_export_pdf=true` 时，额外导出对应 `*.pdf` 文件。
 
 ### 结构化与调试产物
+- `claim_discovery.json`: 自动发现的主张候选、当前选择主张、确认建议。
 - `claim_evidence_matrix.json`: 主张-证据锚点映射。
 - `remediation_plan.json`: 补救实验任务清单。
+- `venue_recommendations.json`: 当你不确定投稿会议时的推荐列表（匹配分、理由、通过/未通过检查项）。
+- `feedback_template.json`: 风险反馈模板（每条 risk 可标记 `correct|incorrect|pending`）。
+- `feedback_README.en.md` / `feedback_README.zh.md`: 反馈模板填写与提交说明。
 - `venue_profile_used.json`: 本次运行使用的会议规则快照。
+  - 包含 `required_check_specs`（可执行阈值）、`source/source_notes`（规则来源链路）。
 - `skill_flow_used.json`: 本次实际执行的 Skill 流程。
 - `mcp_runtime.json`: 本次 MCP backend/provider 与能力开关。
+- `pipeline_steps.json`: 每个 pipeline step 的执行状态轨迹（success/failed/skipped）。
 - `run_summary.json`: 运行状态摘要。
-- `run_result.json`: 完整运行状态对象。
+- `run_result.json`: 完整运行状态对象（含每个 step 的 `success/failed/skipped` 与 `failed_step`，以及已落盘产物清单）。
+- `historical_profile.json`: 本次运行后更新的历史画像快照（作者级 + venue/year 级弱项统计）。
 - `artifacts/`: 中间产物（排查和复盘用）。
+  - `artifacts/risk_ranking.json` 中新增 `stage_strategy`、`focus_risks`、`reviewer_comment_alignment`，用于解释“为什么该阶段优先这些风险”。
+  - `artifacts/citation_graph.json` 的 `stats` 中新增 `content_novelty_score` 与 `content_novelty_components`，用于在低引用场景下从论文正文（intro/method/conclusion）估计 novelty 信号。
 
 ## 运行状态语义
 - `success`: 所有配置产物生成成功。
-- `partial_failed`: 主产物生成成功，但可选环节失败（常见为 PDF 引擎缺失）。
+- `partial_failed`: 主产物生成成功，但可选环节失败（常见为启用 PDF 导出后引擎缺失）。
 - `failed`: 在核心产物生成前流程中断。
 
 ## 常见问题
+- 默认为什么没有 PDF：默认关闭 PDF 导出，仅生成 `md+json`，便于直接复制到 Overleaf 或继续编辑。
+- 如何开启 PDF：在 `input.json` 中设置 `"options": {"always_export_pdf": true}`。
 - PDF 导出失败：先运行 `doctor`，确认 `pandoc` 和 LaTeX 引擎可用。
+- 出现 `pdf_parse_quality_*` 告警：说明 PDF 解析质量不足，建议确认原 PDF 是否包含文本层，或先做 OCR/转 Markdown 再评审。
 - 中文显示异常：请用 UTF-8 打开 Markdown/JSON 文件。
 - 规则标记 `policy_needs_manual_check=true`：表示动态规则解析失败，已回退本地规则。
 - `citation_graph_warning:semantic_scholar_status_429`：Semantic Scholar 匿名请求限流，建议配置 `SEMANTIC_SCHOLAR_API_KEY`。
+
+## 反馈闭环（让系统持续变准）
+运行后你可以把每条风险标记为“判断正确/错误”，下一次运行会自动参考历史反馈做风险分数校准。
+
+1. 打开每次输出目录下的 `feedback_template.json`。
+2. 将每条 `items[*].verdict` 改为 `correct` 或 `incorrect`（未确认可保留 `pending`）。
+3. 可选填写 `comment` 说明误判原因。
+4. 提交反馈：
+```bash
+python -m agent_paper_reviewers.cli submit-feedback --input output/<paper_title>/feedback_template.json
+```
+5. 反馈会落盘到：
+```text
+feedback/<venue>/<year>/
+```
+后续同会议年份运行会自动加载这些反馈信号并校准 `risk_ranking`。
 
 ## 项目结构
 ```text

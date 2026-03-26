@@ -32,5 +32,10 @@ def test_smoke_en_output(tmp_path: Path) -> None:
     assert summary.status in {RunStatus.SUCCESS, RunStatus.PARTIAL_FAILED}
     assert (run_dir / "decision_brief.en.md").exists()
     assert (run_dir / "full_review.en.md").exists()
+    assert (run_dir / "diagnosis_report.en.md").exists()
     assert (run_dir / "rebuttal.en.md").exists()
+
+    decision_md = (run_dir / "decision_brief.en.md").read_text(encoding="utf-8-sig")
+    assert "## Score Rationales" in decision_md
+    assert "Reasoning:" in decision_md
 

@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 import re
 import shutil
 import traceback
@@ -13,6 +14,7 @@ from .mcp.factory import get_mcp_provider
 from .models import ReviewRunInput, RunStatus, RunSummary
 from .pipeline import (
     ClaimEvidenceAlignerStep,
+    ClaimDiscovererStep,
     ClaimNormalizerStep,
     CitationGraphStep,
     EvidenceIndexerStep,
@@ -20,13 +22,20 @@ from .pipeline import (
     GapDetectorStep,
     IntakeStep,
     PaperParserStep,
+    PaperQAGateStep,
     RebuttalComposerStep,
     RemediationPlannerStep,
     ReportBuilderStep,
+    ReviewerQuestionSimulatorStep,
     RiskRankerStep,
+    VenueRecommenderStep,
     VenueProfileResolverStep,
 )
 from .pipeline.base import PipelineContext, PipelineStep
+from .services.historical_profile import (
+    load_historical_profile_prior,
+    update_historical_profiles,
+)
 from .services.skill_flow_loader import load_skill_flow
 from .services.translator import Translator
 
@@ -52,8 +61,13 @@ class ReviewOrchestrator:
             run_id=run_id,
             run_dir=run_dir,
             input_data=input_data,
+            repo_root=self.repo_root,
             mcp_tools=mcp_tools,
         )
+
+        historical_prior = load_historical_profile_prior(self.repo_root, input_data)
+        ctx.artifacts["historical_profile_prior"] = historical_prior
+        ctx.dump_json("artifacts/historical_profile_prior.json", historical_prior)
 
         if flow_profile.warnings:
             for warning in flow_profile.warnings:
@@ -75,31 +89,80 @@ class ReviewOrchestrator:
         ctx.dump_json("artifacts/skill_flow_used.json", skill_flow_payload)
         ctx.dump_json("artifacts/mcp_runtime.json", mcp_runtime_payload)
 
+        step_statuses = self._init_step_statuses(flow_profile.steps)
+        ctx.step_statuses = step_statuses
         step_registry = self._build_step_registry(translator, executor)
-        steps = self._build_step_sequence(flow_profile.steps, step_registry)
+        failed_step_name: str | None = None
 
-        for step in steps:
-            try:
-                step.run(ctx)
-            except Exception as exc:  # noqa: BLE001
-                ctx.status = RunStatus.FAILED
-                err_msg = f"step_failed:{step.name}:{exc}"
-                ctx.add_qa_issue(err_msg)
-                run_dir.mkdir(parents=True, exist_ok=True)
-                (run_dir / "pipeline_exception.log").write_text(
-                    traceback.format_exc(), encoding="utf-8"
-                )
-                break
+        try:
+            steps = self._build_step_sequence(flow_profile.steps, step_registry)
+            for idx, step in enumerate(steps):
+                self._mark_step_running(step_statuses, idx)
+                try:
+                    step.run(ctx)
+                    self._mark_step_success(step_statuses, idx)
+                except Exception as exc:  # noqa: BLE001
+                    ctx.status = RunStatus.FAILED
+                    failed_step_name = step.name
+                    err_msg = f"step_failed:{step.name}:{exc}"
+                    ctx.add_qa_issue(err_msg)
+                    self._mark_step_failed(step_statuses, idx, str(exc))
+                    self._mark_remaining_steps_skipped(step_statuses, idx + 1, step.name)
+                    run_dir.mkdir(parents=True, exist_ok=True)
+                    (run_dir / "pipeline_exception.log").write_text(
+                        traceback.format_exc(), encoding="utf-8"
+                    )
+                    break
+            else:
+                self._mark_unset_steps_as_skipped(step_statuses, reason="not_executed")
+        except Exception as exc:  # noqa: BLE001
+            ctx.status = RunStatus.FAILED
+            err_msg = f"orchestrator_failed:{exc}"
+            ctx.add_qa_issue(err_msg)
+            failed_name = self._extract_unknown_step_name(str(exc))
+            if failed_name:
+                self._mark_unknown_step_failed(step_statuses, failed_name, str(exc))
+                self._mark_remaining_by_name_skipped(step_statuses, failed_name)
+                failed_step_name = failed_name
+            self._mark_unset_steps_as_skipped(step_statuses, reason="orchestrator_failed")
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "pipeline_exception.log").write_text(
+                traceback.format_exc(), encoding="utf-8"
+            )
 
+        ctx.dump_json("pipeline_steps.json", {"steps": step_statuses})
+        historical_profile = update_historical_profiles(
+            self.repo_root,
+            run_id=run_id,
+            input_data=input_data,
+            risk_ranking=ctx.artifacts.get("risk_ranking"),
+            gaps=ctx.artifacts.get("gaps"),
+            alignments=ctx.artifacts.get("claim_evidence_matrix"),
+        )
+        ctx.artifacts["historical_profile"] = historical_profile
+        ctx.dump_json("historical_profile.json", historical_profile)
+        ctx.dump_json("artifacts/historical_profile.json", historical_profile)
+        produced_artifacts = self._collect_produced_artifacts(run_dir)
         summary = RunSummary(
             run_id=run_id,
             status=ctx.status,
             output_dir=str(run_dir),
             qa_issues=ctx.qa_issues,
+            step_statuses=step_statuses,
+            produced_artifacts=produced_artifacts,
+            historical_profile=historical_profile,
         )
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "run_result.json").write_text(
-            summary.model_dump_json(indent=2), encoding="utf-8"
+            json.dumps(
+                {
+                    **summary.model_dump(),
+                    "failed_step": failed_step_name,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
         )
         return summary
 
@@ -110,17 +173,21 @@ class ReviewOrchestrator:
     ) -> dict[str, PipelineStep]:
         return {
             "Intake": IntakeStep(),
-            "VenueProfileResolver": VenueProfileResolverStep(self.repo_root),
+            "VenueProfileResolver": VenueProfileResolverStep(self.repo_root, executor),
             "PaperParser": PaperParserStep(),
+            "ClaimDiscoverer": ClaimDiscovererStep(executor),
             "ClaimNormalizer": ClaimNormalizerStep(executor),
             "EvidenceIndexer": EvidenceIndexerStep(),
             "ClaimEvidenceAligner": ClaimEvidenceAlignerStep(),
             "CitationGraph": CitationGraphStep(),
             "GapDetector": GapDetectorStep(),
+            "VenueRecommender": VenueRecommenderStep(),
             "RiskRanker": RiskRankerStep(executor),
+            "ReviewerQuestionSimulator": ReviewerQuestionSimulatorStep(executor),
             "RemediationPlanner": RemediationPlannerStep(executor),
-            "RebuttalComposer": RebuttalComposerStep(translator),
-            "ReportBuilder": ReportBuilderStep(translator),
+            "RebuttalComposer": RebuttalComposerStep(translator, executor),
+            "PaperQAGate": PaperQAGateStep(translator, executor),
+            "ReportBuilder": ReportBuilderStep(translator, executor),
             "ExporterAndQAGate": ExporterAndQAGateStep(),
         }
 
@@ -136,6 +203,100 @@ class ReviewOrchestrator:
                 raise ValueError(f"unknown_step_in_skill_flow:{name}")
             steps.append(step)
         return steps
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.utcnow().isoformat() + "Z"
+
+    def _init_step_statuses(self, step_names: list[str]) -> list[dict]:
+        return [
+            {
+                "name": name,
+                "status": "pending",
+                "started_at": None,
+                "ended_at": None,
+                "error": None,
+                "skip_reason": None,
+            }
+            for name in step_names
+        ]
+
+    def _mark_step_running(self, statuses: list[dict], idx: int) -> None:
+        statuses[idx]["status"] = "running"
+        statuses[idx]["started_at"] = self._now_iso()
+        statuses[idx]["ended_at"] = None
+        statuses[idx]["error"] = None
+        statuses[idx]["skip_reason"] = None
+
+    def _mark_step_success(self, statuses: list[dict], idx: int) -> None:
+        statuses[idx]["status"] = "success"
+        if statuses[idx].get("started_at") is None:
+            statuses[idx]["started_at"] = self._now_iso()
+        statuses[idx]["ended_at"] = self._now_iso()
+
+    def _mark_step_failed(self, statuses: list[dict], idx: int, error: str) -> None:
+        statuses[idx]["status"] = "failed"
+        if statuses[idx].get("started_at") is None:
+            statuses[idx]["started_at"] = self._now_iso()
+        statuses[idx]["ended_at"] = self._now_iso()
+        statuses[idx]["error"] = error
+
+    def _mark_remaining_steps_skipped(self, statuses: list[dict], start_idx: int, blocker: str) -> None:
+        for pos in range(start_idx, len(statuses)):
+            if statuses[pos].get("status") in {"pending", "running"}:
+                statuses[pos]["status"] = "skipped"
+                statuses[pos]["started_at"] = None
+                statuses[pos]["ended_at"] = self._now_iso()
+                statuses[pos]["skip_reason"] = f"blocked_by:{blocker}"
+
+    def _mark_unset_steps_as_skipped(self, statuses: list[dict], reason: str) -> None:
+        for row in statuses:
+            if row.get("status") in {"pending", "running"}:
+                row["status"] = "skipped"
+                row["ended_at"] = self._now_iso()
+                row["skip_reason"] = reason
+
+    @staticmethod
+    def _extract_unknown_step_name(error: str) -> str | None:
+        marker = "unknown_step_in_skill_flow:"
+        if marker not in error:
+            return None
+        return error.split(marker, 1)[1].strip() or None
+
+    def _mark_unknown_step_failed(self, statuses: list[dict], name: str, error: str) -> None:
+        for row in statuses:
+            if row.get("name") == name:
+                row["status"] = "failed"
+                row["started_at"] = row.get("started_at") or self._now_iso()
+                row["ended_at"] = self._now_iso()
+                row["error"] = error
+                row["skip_reason"] = None
+                return
+
+    def _mark_remaining_by_name_skipped(self, statuses: list[dict], failed_name: str) -> None:
+        seen_failed = False
+        for row in statuses:
+            if row.get("name") == failed_name:
+                seen_failed = True
+                continue
+            if seen_failed and row.get("status") in {"pending", "running"}:
+                row["status"] = "skipped"
+                row["ended_at"] = self._now_iso()
+                row["skip_reason"] = f"blocked_by:{failed_name}"
+
+    @staticmethod
+    def _collect_produced_artifacts(run_dir: Path) -> list[str]:
+        if not run_dir.exists():
+            return []
+        out: list[str] = []
+        for path in sorted(run_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(run_dir).as_posix()
+            if rel == "run_result.json":
+                continue
+            out.append(rel)
+        return out
 
     @staticmethod
     def _build_output_dir(output_root: Path, input_data: ReviewRunInput) -> Path:

@@ -31,5 +31,13 @@ profile:
     attachment_page_limit: 0
     allow_links: false
     dynamic_from_openreview: true
+  decision_policy:
+    strictness_tier: high_competition
+    p0_not_ready: true
+    p1_not_ready_threshold: 2
+    p1_borderline_threshold: 1
+    min_overall_ready: 6.8
+    min_overall_borderline: 5.9
+    notes: ARR competition remains high; Borderline means major risk before target ACL-family venue.
   openreview_group_id: aclweb.org/ACL/ARR/2026
   version_date: '2026-03-25'

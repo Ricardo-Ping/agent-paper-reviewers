@@ -75,6 +75,8 @@ def test_risk_ranker_prefers_executor_output(tmp_path: Path) -> None:
 
     assert ctx.artifacts["risk_ranking"]["risks"][0]["id"] == "RISK-X"
     assert ctx.artifacts["risk_ranking"]["scores"]["overall"] == 6.0
+    assert "score_explanations" in ctx.artifacts["risk_ranking"]
+    assert ctx.artifacts["risk_ranking"]["score_explanations"]["novelty"]["reasoning"]
 
 
 def test_remediation_planner_falls_back_on_invalid_executor_output(tmp_path: Path) -> None:

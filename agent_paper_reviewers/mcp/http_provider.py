@@ -2,6 +2,8 @@
 
 import os
 import re
+from collections import Counter
+from datetime import datetime
 from typing import Any
 
 import requests
@@ -23,7 +25,7 @@ class HttpMCPToolProvider(MCPToolProvider):
 
     def resolve_openreview_policy(self, group_id: str) -> PolicyResolveResult:
         if not group_id:
-            return PolicyResolveResult(policy=None, warning="openreview_group_id_missing")
+            return PolicyResolveResult(policy=None, warning="openreview_group_id_missing", resolved_group_id=None)
 
         warnings: list[str] = []
         group_data, group_warn = self._fetch_json("/groups", {"id": group_id})
@@ -31,13 +33,17 @@ class HttpMCPToolProvider(MCPToolProvider):
             warnings.append(group_warn)
         if not isinstance(group_data, dict):
             if not warnings and not self.token:
-                return PolicyResolveResult(policy=None, warning=None)
-            return PolicyResolveResult(policy=None, warning=";".join(warnings) if warnings else "openreview_group_fetch_failed")
+                return PolicyResolveResult(policy=None, warning=None, resolved_group_id=group_id)
+            return PolicyResolveResult(
+                policy=None,
+                warning=";".join(warnings) if warnings else "openreview_group_fetch_failed",
+                resolved_group_id=group_id,
+            )
 
         groups = group_data.get("groups")
         if not isinstance(groups, list) or not groups:
             warnings.append("openreview_group_not_found")
-            return PolicyResolveResult(policy=None, warning=";".join(warnings))
+            return PolicyResolveResult(policy=None, warning=";".join(warnings), resolved_group_id=group_id)
 
         group = groups[0] if isinstance(groups[0], dict) else {}
         details = group.get("details") if isinstance(group.get("details"), dict) else {}
@@ -59,6 +65,9 @@ class HttpMCPToolProvider(MCPToolProvider):
         scoring_axes = self._extract_scoring_axes(group, details, invitations)
         weights = self._extract_weights(group, details, invitations, scoring_axes)
         common_reject = self._extract_reject_reasons(group, details, invitations)
+        trend_reasons = self._extract_recent_weakness_trends(group_id)
+        if trend_reasons:
+            common_reject = list(dict.fromkeys(common_reject + trend_reasons))[:10]
 
         policy, policy_warns = self._extract_rebuttal_policy(group, details, invitations)
         warnings.extend(policy_warns)
@@ -67,6 +76,7 @@ class HttpMCPToolProvider(MCPToolProvider):
             "scoring_axes": scoring_axes,
             "weights": weights,
             "common_reject_reasons": common_reject,
+            "dynamic_focus_weaknesses": trend_reasons,
         }
 
         # Keep only non-empty overrides.
@@ -77,7 +87,17 @@ class HttpMCPToolProvider(MCPToolProvider):
             policy=policy,
             profile_overrides=overrides or None,
             warning=warning,
+            resolved_group_id=group_id,
         )
+
+    def resolve_openreview_policy_by_venue(self, venue_name: str, year: int) -> PolicyResolveResult:
+        for group_id in self._candidate_group_ids(venue_name, year):
+            resolved = self.resolve_openreview_policy(group_id)
+            if resolved.policy is not None or resolved.profile_overrides is not None:
+                if not resolved.resolved_group_id:
+                    resolved.resolved_group_id = group_id
+                return resolved
+        return PolicyResolveResult(policy=None, warning=None, resolved_group_id=None)
 
     def _fetch_json(
         self,
@@ -376,8 +396,111 @@ class HttpMCPToolProvider(MCPToolProvider):
         text = "\n".join(HttpMCPToolProvider._collect_text_values(obj)).lower()
         return any(k in text for k in ["url", "link", "http://", "https://", "external link"])
 
+    def _extract_recent_weakness_trends(self, group_id: str) -> list[str]:
+        m = re.match(r"^(?P<prefix>.+?)/(?P<year>20\d{2})/Conference$", group_id)
+        if not m:
+            return []
+
+        prefix = m.group("prefix")
+        year = int(m.group("year"))
+        years = [year, year - 1, year - 2]
+
+        review_invitation_suffixes = [
+            "Official_Review",
+            "Meta_Review",
+            "Ethics_Review",
+            "Senior_Area_Chair_Comment",
+        ]
+        text_blobs: list[str] = []
+
+        for y in years:
+            for suffix in review_invitation_suffixes:
+                invitation = f"{prefix}/{y}/Conference/-/{suffix}"
+                notes_data, _ = self._fetch_json("/notes", {"invitation": invitation, "limit": 200}, allow_fail=True)
+                if not isinstance(notes_data, dict):
+                    continue
+                notes = notes_data.get("notes")
+                if not isinstance(notes, list):
+                    continue
+                for note in notes:
+                    if not isinstance(note, dict):
+                        continue
+                    content = note.get("content")
+                    if isinstance(content, dict):
+                        text_blobs.extend(self._collect_text_values(content))
+
+        if not text_blobs:
+            return []
+
+        trend_map = {
+            "baseline": "Recent OpenReview trend: baseline comparisons are often considered insufficient.",
+            "significance": "Recent OpenReview trend: significance reporting and confidence intervals are frequently missing.",
+            "ablation": "Recent OpenReview trend: ablation coverage is often questioned.",
+            "reproduc": "Recent OpenReview trend: reproducibility details are a recurrent rejection trigger.",
+            "clarity": "Recent OpenReview trend: writing clarity and paper organization are repeatedly criticized.",
+            "novelty": "Recent OpenReview trend: novelty positioning versus prior work is frequently challenged.",
+            "limitation": "Recent OpenReview trend: limitations and failure modes are expected to be explicit.",
+            "robust": "Recent OpenReview trend: robustness checks are increasingly expected.",
+            "workload": "Recent OpenReview trend: workload diversity and benchmark representativeness are closely reviewed.",
+            "scalability": "Recent OpenReview trend: scalability evidence is often scrutinized.",
+        }
+
+        counts: Counter[str] = Counter()
+        joined = "\n".join(text_blobs).lower()
+        for key in trend_map:
+            counts[key] = len(re.findall(rf"\b{re.escape(key)}\w*\b", joined))
+
+        reasons: list[str] = []
+        for key, _ in counts.most_common(4):
+            if counts[key] <= 0:
+                continue
+            reasons.append(trend_map[key])
+        return reasons
+
+    def _candidate_group_ids(self, venue_name: str, year: int) -> list[str]:
+        venue = venue_name.strip().lower().replace("_", "-").replace(" ", "-")
+        token = re.sub(r"[^a-z0-9]", "", venue).upper()
+        now_year = datetime.now().year
+        years = [year]
+        if year < now_year:
+            years.extend([year + 1, year - 1])
+        else:
+            years.extend([year - 1, year - 2])
+        years = [y for y in years if 2000 <= y <= now_year + 1]
+
+        alias = {
+            "acl-arr": "ACL",
+            "acl": "ACL",
+            "emnlp": "EMNLP",
+            "neurips": "NeurIPS",
+            "iclr": "ICLR",
+            "icml": "ICML",
+            "kdd": "KDD",
+            "aaai": "AAAI",
+            "cvpr": "CVPR",
+            "eccv": "ECCV",
+            "sigmod": "SIGMOD",
+            "vldb": "VLDB",
+            "icde": "ICDE",
+        }
+        pretty = alias.get(venue, token)
+
+        cands: list[str] = []
+        for y in years:
+            cands.extend(
+                [
+                    f"{pretty}.cc/{y}/Conference",
+                    f"{pretty}/{y}/Conference",
+                    f"{token}.cc/{y}/Conference",
+                    f"{token}/{y}/Conference",
+                ]
+            )
+        # Keep order and unique.
+        return list(dict.fromkeys(cands))
+
     def capabilities(self) -> dict[str, bool]:
         return {
             "openreview_policy_resolver": True,
+            "openreview_group_discovery": True,
         }
 

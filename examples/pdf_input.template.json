@@ -11,6 +11,11 @@
     "Claim 1: your core contribution.",
     "Claim 2: your strongest empirical result."
   ],
+  "review_context": {
+    "manuscript_stage": "initial_submission",
+    "reviewer_comments": [],
+    "note": ""
+  },
   "constraints": {
     "time_days": 10,
     "gpu_budget_hours": 80,
@@ -21,7 +26,7 @@
     "language_mode": "en_zh",
     "executor_backend": "codex",
     "mcp_backend": "http",
-    "always_export_pdf": true
+    "always_export_pdf": false
   }
 }
 

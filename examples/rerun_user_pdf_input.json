@@ -22,6 +22,6 @@
     "language_mode": "en_zh",
     "executor_backend": "local_vllm",
     "mcp_backend": "http",
-    "always_export_pdf": true
+    "always_export_pdf": false
   }
 }

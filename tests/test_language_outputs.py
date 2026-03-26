@@ -43,6 +43,22 @@ def test_bilingual_outputs(sample_input: Path, tmp_path: Path) -> None:
     run_dir = Path(summary.output_dir)
     assert (run_dir / "decision_brief.en.md").exists()
     assert (run_dir / "decision_brief.zh.md").exists()
+    assert (run_dir / "submission_readiness.en.json").exists()
+    assert (run_dir / "submission_readiness.zh.json").exists()
     assert (run_dir / "full_review.en.json").exists()
     assert (run_dir / "full_review.zh.json").exists()
+    assert (run_dir / "diagnosis_report.en.md").exists()
+    assert (run_dir / "diagnosis_report.zh.md").exists()
+
+    decision_en = json.loads((run_dir / "decision_brief.en.json").read_text(encoding="utf-8"))
+    decision_zh = json.loads((run_dir / "decision_brief.zh.json").read_text(encoding="utf-8"))
+    assert "score_explanations" in decision_en
+    assert "novelty" in decision_en["score_explanations"]
+    assert decision_en["score_explanations"]["novelty"]["reasoning"]
+    assert "score_explanations" in decision_zh
+    assert "paper_qa_gate" in decision_en
+    assert "paper_qa_gate" in decision_zh
+    assert "submission_readiness" in decision_en
+    assert "submission_readiness" in decision_zh
+    assert decision_zh["submission_readiness"]["overall_status"] in {"通过", "预警", "阻断"}
 

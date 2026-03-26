@@ -10,6 +10,7 @@ class PolicyResolveResult:
     policy: RebuttalPolicy | None
     profile_overrides: dict | None = None
     warning: str | None = None
+    resolved_group_id: str | None = None
 
 
 class MCPToolProvider:
@@ -24,7 +25,11 @@ class MCPToolProvider:
     def resolve_openreview_policy(self, group_id: str) -> PolicyResolveResult:
         raise NotImplementedError
 
+    def resolve_openreview_policy_by_venue(self, venue_name: str, year: int) -> PolicyResolveResult:
+        return PolicyResolveResult(policy=None, warning=None)
+
     def capabilities(self) -> dict[str, bool]:
         return {
             "openreview_policy_resolver": False,
+            "openreview_group_discovery": False,
         }

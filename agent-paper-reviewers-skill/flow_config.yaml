@@ -5,14 +5,18 @@ pipeline_steps:
   - Intake
   - VenueProfileResolver
   - PaperParser
+  - ClaimDiscoverer
   - ClaimNormalizer
   - EvidenceIndexer
   - ClaimEvidenceAligner
   - CitationGraph
   - GapDetector
+  - VenueRecommender
   - RiskRanker
+  - ReviewerQuestionSimulator
   - RemediationPlanner
   - RebuttalComposer
+  - PaperQAGate
   - ReportBuilder
   - ExporterAndQAGate
 

@@ -119,3 +119,23 @@ def test_http_openreview_policy_handles_forbidden_with_token(monkeypatch) -> Non
     assert result.policy is None
     assert result.warning is not None
     assert "openreview_forbidden_with_token" in result.warning
+
+
+def test_http_openreview_policy_can_discover_group_by_venue(monkeypatch) -> None:
+    def fake_get(url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 10):
+        if url.endswith("/groups"):
+            group_id = (params or {}).get("id", "")
+            if group_id == "ICLR.cc/2026/Conference":
+                return _FakeResponse(200, {"groups": [{"id": group_id, "details": {}}]})
+            return _FakeResponse(200, {"groups": []})
+        if url.endswith("/invitations"):
+            return _FakeResponse(200, {"invitations": []})
+        if url.endswith("/notes"):
+            return _FakeResponse(200, {"notes": []})
+        return _FakeResponse(404, {})
+
+    monkeypatch.setattr("agent_paper_reviewers.mcp.http_provider.requests.get", fake_get)
+
+    provider = HttpMCPToolProvider(base_url="https://api2.openreview.net", token="fake-token")
+    result = provider.resolve_openreview_policy_by_venue("iclr", 2026)
+    assert result.resolved_group_id == "ICLR.cc/2026/Conference"

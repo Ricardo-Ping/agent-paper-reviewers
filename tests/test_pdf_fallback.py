@@ -7,6 +7,16 @@ from agent_paper_reviewers.orchestrator import ReviewOrchestrator
 import agent_paper_reviewers.pipeline.step_exporter_qa as exporter_step
 
 
+def test_pdf_export_default_is_disabled() -> None:
+    payload = {
+        "paper": {"format": "md", "path": "paper.md"},
+        "venue": {"name": "ICLR", "year": 2026},
+        "claims": ["Claim."],
+    }
+    data = ReviewRunInput.model_validate(payload)
+    assert data.options.always_export_pdf is False
+
+
 def test_pdf_fallback_partial_failed(tmp_path: Path, monkeypatch) -> None:
     paper = tmp_path / "paper.md"
     paper.write_text(

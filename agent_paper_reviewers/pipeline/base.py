@@ -16,8 +16,10 @@ class PipelineContext:
     run_id: str
     run_dir: Path
     input_data: ReviewRunInput
+    repo_root: Path | None = None
     mcp_tools: "MCPToolProvider | None" = None
     artifacts: dict[str, Any] = field(default_factory=dict)
+    step_statuses: list[dict[str, Any]] = field(default_factory=list)
     qa_issues: list[str] = field(default_factory=list)
     _qa_issue_seen: set[str] = field(default_factory=set)
     status: RunStatus = RunStatus.SUCCESS

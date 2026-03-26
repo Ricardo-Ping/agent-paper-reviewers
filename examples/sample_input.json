@@ -11,6 +11,11 @@
     "The proposed method improves average benchmark performance by 3.4 points.",
     "The method is 22% faster than existing baselines."
   ],
+  "review_context": {
+    "manuscript_stage": "initial_submission",
+    "reviewer_comments": [],
+    "note": ""
+  },
   "constraints": {
     "time_days": 7,
     "gpu_budget_hours": 40,
@@ -21,7 +26,7 @@
     "language_mode": "en_zh",
     "executor_backend": "codex",
     "mcp_backend": "http",
-    "always_export_pdf": true
+    "always_export_pdf": false
   }
 }
 

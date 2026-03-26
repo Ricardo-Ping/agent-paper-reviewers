@@ -31,5 +31,13 @@ profile:
     attachment_page_limit: 0
     allow_links: false
     dynamic_from_openreview: true
+  decision_policy:
+    strictness_tier: high_competition
+    p0_not_ready: true
+    p1_not_ready_threshold: 2
+    p1_borderline_threshold: 1
+    min_overall_ready: 7.0
+    min_overall_borderline: 6.0
+    notes: Borderline is treated as near-reject risk for highly competitive AI/CV venues.
   openreview_group_id: thecvf.com/CVPR/2026/Conference
   version_date: '2026-03-25'

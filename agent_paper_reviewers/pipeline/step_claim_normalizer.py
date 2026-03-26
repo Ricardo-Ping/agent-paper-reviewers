@@ -26,8 +26,21 @@ class ClaimNormalizerStep(PipelineStep):
         paper = ctx.artifacts["paper_structured"]
         raw_text = paper.get("raw_text", "")
 
-        auto_claims = self._extract_auto_claims(raw_text)
-        merged = self._merge_claims(ctx.input_data.claims, auto_claims)
+        discovered = ctx.artifacts.get("claim_discovery", {})
+        selected_claims = discovered.get("selected_claims", []) if isinstance(discovered, dict) else []
+        selected_claims = [str(c) for c in selected_claims if str(c).strip()]
+
+        if selected_claims:
+            merged = self._merge_claims(selected_claims, [])
+        else:
+            auto_claims = self._extract_auto_claims(raw_text)
+            merged = self._merge_claims(ctx.input_data.claims, auto_claims)
+
+        if not merged:
+            merged = [
+                "The paper presents contributions that require direct empirical validation and reproducibility evidence."
+            ]
+            ctx.add_qa_issue("claim_normalizer_warning:no_claim_input_use_fallback_claim")
 
         normalized_claims = []
         for idx, claim in enumerate(merged, start=1):
