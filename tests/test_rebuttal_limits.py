@@ -20,7 +20,7 @@ def test_rebuttal_char_limit(tmp_path: Path) -> None:
         "claims": ["Core claim with limited support."],
         "options": {
             "language_mode": "en",
-            "executor_backend": "codex",
+            "executor_backend": "local_vllm",
             "always_export_pdf": False,
         },
     }
@@ -33,4 +33,5 @@ def test_rebuttal_char_limit(tmp_path: Path) -> None:
     for item in rebuttal["items"]:
         assert item["char_count"] <= item["char_limit"]
         assert item["char_limit"] == 10000
+
 

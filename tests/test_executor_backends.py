@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
+
 from agent_paper_reviewers.executors.anthropic_executor import AnthropicExecutor
 from agent_paper_reviewers.executors.deterministic import DeterministicExecutor
-from agent_paper_reviewers.executors.factory import get_executor
+from agent_paper_reviewers.executors.factory import get_executor, validate_executor_readiness
 from agent_paper_reviewers.executors.openai_compatible_executor import OpenAICompatibleExecutor
 from agent_paper_reviewers.executors.openclawnode_executor import OpenClawNodeExecutor
 from agent_paper_reviewers.models import ExecutorBackend, TaskSpec
@@ -72,3 +74,94 @@ def test_deterministic_executor_supports_reviewer_and_paper_qa_tasks() -> None:
     assert qa_result.ok
     assert "accept" in qa_result.output
     assert "per_item" in qa_result.output
+
+
+def test_openai_executor_routes_model_profile(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            return {"choices": [{"message": {"content": json.dumps({"ok": True})}}]}
+
+    def _fake_post(url, headers, json, timeout):  # noqa: ANN001
+        captured["model"] = json.get("model")
+        return _Resp()
+
+    monkeypatch.setattr("agent_paper_reviewers.executors.openai_compatible_executor.httpx.post", _fake_post)
+
+    executor = OpenAICompatibleExecutor(
+        base_url="https://api.openai.com/v1",
+        api_key="test-key",
+        default_model="gpt-default",
+        model_profile_map=OpenAICompatibleExecutor.DEFAULT_MODEL_PROFILE_MAP,
+    )
+    spec = TaskSpec(
+        task_type="risk_ranking",
+        prompt="rank",
+        context={},
+        output_schema={"ok": True},
+        model_profile="judge",
+    )
+    result = executor.execute(spec)
+    assert result.ok is True
+    assert captured["model"] == "gpt-4.1-mini"
+
+
+def test_openai_executor_prefers_explicit_context_model_over_profile(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            return {"choices": [{"message": {"content": json.dumps({"ok": True})}}]}
+
+    def _fake_post(url, headers, json, timeout):  # noqa: ANN001
+        captured["model"] = json.get("model")
+        return _Resp()
+
+    monkeypatch.setattr("agent_paper_reviewers.executors.openai_compatible_executor.httpx.post", _fake_post)
+
+    executor = OpenAICompatibleExecutor(
+        base_url="https://api.openai.com/v1",
+        api_key="test-key",
+        default_model="gpt-default",
+        model_profile_map=OpenAICompatibleExecutor.DEFAULT_MODEL_PROFILE_MAP,
+    )
+    spec = TaskSpec(
+        task_type="risk_ranking",
+        prompt="rank",
+        context={"model": "custom-model-x"},
+        output_schema={"ok": True},
+        model_profile="judge",
+    )
+    result = executor.execute(spec)
+    assert result.ok is True
+    assert captured["model"] == "custom-model-x"
+
+
+def test_validate_executor_readiness_requires_key_for_openai(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AGENT_PAPER_REVIEWERS_CODEX_API_KEY", raising=False)
+    ok, reason = validate_executor_readiness(ExecutorBackend.OPENAI)
+    assert ok is False
+    assert "OPENAI_API_KEY" in reason
+
+
+def test_openclaw_resolve_model_uses_profile_env(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_PAPER_REVIEWERS_MODEL_PROFILE_JUDGE", "custom-judge-model")
+    executor = OpenClawNodeExecutor()
+    spec = TaskSpec(
+        task_type="risk_ranking",
+        prompt="rank",
+        context={},
+        output_schema={},
+        model_profile="judge",
+    )
+    assert executor._resolve_model(spec) == "custom-judge-model"

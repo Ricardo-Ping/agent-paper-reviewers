@@ -36,6 +36,27 @@ class _StatDetectExecutor:
         )
 
 
+class _GapFallbackExecutor:
+    def execute(self, spec: TaskSpec) -> TaskResult:
+        if spec.task_type != "gap_detection_agent":
+            return TaskResult(ok=True, output={})
+        return TaskResult(
+            ok=True,
+            output={
+                "gaps": [
+                    {
+                        "code": "missing_significance",
+                        "severity_hint": "P1",
+                        "specific_description": "fallback gap",
+                        "evidence_passage_ids": ["p1"],
+                        "fix_action": "add stats",
+                    }
+                ]
+            },
+            warnings=["executor_api_key_missing_use_fallback"],
+        )
+
+
 def _ctx(tmp_path: Path) -> PipelineContext:
     paper = tmp_path / "paper.md"
     paper.write_text("# T\n\n## Method\nM\n\n## Experiments\nE\n", encoding="utf-8")
@@ -472,6 +493,35 @@ def test_gap_detector_detects_terminology_inconsistency(tmp_path: Path) -> None:
     assert row["passed"] is False
     assert row["terminology_consistency"]["issue_count"] >= 1
     assert row["evidence_refs"]
+
+
+def test_gap_detector_marks_source_and_warns_on_executor_fallback(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    ctx.artifacts["paper_structured"] = {"raw_text": "We compare baselines but no significance tests."}
+    ctx.artifacts["venue_profile"] = {
+        "profile": {
+            "required_checks": ["statistical_significance"],
+            "required_check_specs": {},
+        }
+    }
+    ctx.artifacts["evidence_index"] = {
+        "passages": [
+            {
+                "id": "p1",
+                "section": "experiments",
+                "text": "Single run only.",
+            }
+        ]
+    }
+    ctx.artifacts["claim_evidence_matrix"] = {"alignments": []}
+    ctx.artifacts["citation_graph"] = {"stats": {}}
+
+    GapDetectorStep(executor=_GapFallbackExecutor()).run(ctx)
+    payload = ctx.artifacts["gaps"]
+    assert payload["gap_detection_source"] == "rule_fallback"
+    assert payload["semantic_executor_status"] == "fallback"
+    assert payload["semantic_executor_fallback"] is True
+    assert any("gap_detector_agent_warning:executor_api_key_missing_use_fallback" in x for x in ctx.qa_issues)
 
 
 def test_claim_aligner_detects_negative_evidence_and_gap(tmp_path: Path) -> None:

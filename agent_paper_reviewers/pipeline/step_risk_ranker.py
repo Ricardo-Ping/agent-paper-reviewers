@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import re
+from typing import Any
 
 from ..executors.base import ExecutorAdapter
 from ..models import EvidenceRef, RiskItem, ScoreBundle, TaskSpec
@@ -23,14 +24,23 @@ class RiskRankerStep(PipelineStep):
         alignments = ctx.artifacts["claim_evidence_matrix"]["alignments"]
         gaps = ctx.artifacts["gaps"]["gaps"]
         venue_profile = ctx.artifacts.get("venue_profile", {}).get("profile", {})
+        feedback_prior = self._build_feedback_prompt_prior(ctx)
+        ctx.artifacts["prompt_evolution"] = {"risk_ranker": feedback_prior}
+        ctx.dump_json("artifacts/prompt_evolution.risk_ranker.json", feedback_prior)
 
-        payload = self._rank_with_executor(ctx, alignments, gaps)
+        payload = self._rank_with_executor(ctx, alignments, gaps, feedback_prior)
         source = "executor"
         if payload is None:
             payload = self._rank_rule_based(ctx, alignments, gaps, venue_profile)
             source = "rule_fallback"
 
-        payload = self._apply_feedback_loop(ctx, payload, venue_profile)
+        payload = self._apply_feedback_loop(
+            ctx,
+            payload,
+            venue_profile,
+            preloaded_records=feedback_prior.get("_raw_records", []),
+            preloaded_profile=feedback_prior.get("_raw_profile", {}),
+        )
         payload = self._apply_stage_strategy(ctx, payload, venue_profile)
         payload["score_explanations"] = self._ensure_score_explanations(
             payload,
@@ -46,6 +56,9 @@ class RiskRankerStep(PipelineStep):
         ctx: PipelineContext,
         payload: dict,
         venue_profile: dict,
+        *,
+        preloaded_records: list[dict] | None = None,
+        preloaded_profile: dict[str, dict[str, Any]] | None = None,
     ) -> dict:
         risks = payload.get("risks")
         if not isinstance(risks, list) or not risks:
@@ -63,8 +76,16 @@ class RiskRankerStep(PipelineStep):
         venue_year = int(ctx.input_data.venue.year or 0)
 
         try:
-            records = load_feedback_records(repo_root, venue_name, venue_year)
-            profile = build_feedback_profile(records, target_year=venue_year)
+            records = (
+                preloaded_records
+                if isinstance(preloaded_records, list)
+                else load_feedback_records(repo_root, venue_name, venue_year)
+            )
+            profile = (
+                preloaded_profile
+                if isinstance(preloaded_profile, dict)
+                else build_feedback_profile(records, target_year=venue_year)
+            )
             adjusted, signals = apply_feedback_profile(risks, profile)
         except Exception as exc:  # noqa: BLE001
             ctx.add_qa_issue(f"feedback_loop_apply_failed:{exc}")
@@ -264,21 +285,47 @@ class RiskRankerStep(PipelineStep):
         ctx: PipelineContext,
         alignments: list[dict],
         gaps: list[dict],
+        feedback_prior: dict[str, Any] | None = None,
     ) -> dict | None:
         if self.executor is None:
             return None
+        if not isinstance(feedback_prior, dict):
+            feedback_prior = {}
+
+        feedback_guidance: list[str] = []
+        if feedback_prior.get("applied"):
+            feedback_guidance.append(
+                "Use feedback_prior patterns to calibrate risk confidence: historically incorrect patterns should be down-weighted, historically correct patterns should be up-weighted."
+            )
+            feedback_guidance.append(
+                "Apply calibration only when the generated risk is semantically close to the feedback pattern."
+            )
 
         spec = TaskSpec(
             task_type="risk_ranking",
             prompt=(
                 "You are a strict conference reviewer. Rank rejection risks using the provided claim-evidence "
-                "alignment and detected gaps. Return JSON with fields: risks, scores."
+                "alignment and detected gaps. Return JSON with fields: risks, scores. "
+                + " ".join(feedback_guidance)
             ),
             context={
                 "alignments": alignments,
                 "gaps": gaps,
                 "score_scale": "risk score in [0,1], where higher means higher rejection risk",
                 "severity_levels": ["P0", "P1", "P2"],
+                "feedback_prior": {
+                    "applied": bool(feedback_prior.get("applied", False)),
+                    "records_loaded": int(feedback_prior.get("records_loaded", 0) or 0),
+                    "profiles_loaded": int(feedback_prior.get("profiles_loaded", 0) or 0),
+                    "high_confidence_correct_patterns": feedback_prior.get(
+                        "high_confidence_correct_patterns",
+                        [],
+                    ),
+                    "high_confidence_incorrect_patterns": feedback_prior.get(
+                        "high_confidence_incorrect_patterns",
+                        [],
+                    ),
+                },
             },
             output_schema={
                 "risks": [
@@ -316,8 +363,15 @@ class RiskRankerStep(PipelineStep):
         )
 
         result = self.executor.execute(spec)
+        fallback_detected = False
         for w in result.warnings:
             ctx.add_qa_issue(f"risk_ranker_executor_warning:{w}")
+            lower = str(w).lower()
+            if "fallback" in lower or "api_key_missing" in lower:
+                fallback_detected = True
+        if fallback_detected:
+            ctx.add_qa_issue("risk_ranker_executor_fallback_detected_use_rule_fallback")
+            return None
 
         if not result.ok:
             ctx.add_qa_issue("risk_ranker_executor_not_ok_use_rule_fallback")
@@ -337,6 +391,92 @@ class RiskRankerStep(PipelineStep):
             gaps=gaps,
         )
         return {"scores": scores.model_dump(), "risks": risks, "score_explanations": explanations}
+
+    def _build_feedback_prompt_prior(self, ctx: PipelineContext) -> dict[str, Any]:
+        repo_root = ctx.repo_root or Path.cwd()
+        venue_name = str(ctx.input_data.venue.name or "")
+        venue_year = int(ctx.input_data.venue.year or 0)
+
+        try:
+            records = load_feedback_records(repo_root, venue_name, venue_year)
+            profile = build_feedback_profile(records, target_year=venue_year)
+        except Exception as exc:  # noqa: BLE001
+            ctx.add_qa_issue(f"feedback_prior_build_failed:{exc}")
+            return {
+                "applied": False,
+                "records_loaded": 0,
+                "profiles_loaded": 0,
+                "high_confidence_correct_patterns": [],
+                "high_confidence_incorrect_patterns": [],
+                "_raw_records": [],
+                "_raw_profile": {},
+            }
+
+        fp_reason_map: dict[str, str] = {}
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            items = record.get("items", [])
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                fp = str(item.get("risk_fingerprint", "")).strip()
+                reason = str(item.get("reason", "")).strip()
+                if fp and reason and fp not in fp_reason_map:
+                    fp_reason_map[fp] = reason
+
+        correct_patterns: list[dict[str, Any]] = []
+        incorrect_patterns: list[dict[str, Any]] = []
+        for fp, stat in profile.items():
+            if not isinstance(stat, dict):
+                continue
+            wc = float(stat.get("correct_weighted", 0.0) or 0.0)
+            wi = float(stat.get("incorrect_weighted", 0.0) or 0.0)
+            total = wc + wi
+            if total <= 0.8:
+                continue
+            margin = abs(wc - wi) / max(total, 1e-6)
+            if margin < 0.12:
+                continue
+
+            row = {
+                "risk_fingerprint": fp,
+                "reason": fp_reason_map.get(fp, ""),
+                "weighted_correct": round(wc, 3),
+                "weighted_incorrect": round(wi, 3),
+                "signal_strength": round(margin, 3),
+                "total_weighted": round(total, 3),
+            }
+            if wc > wi:
+                correct_patterns.append(row)
+            elif wi > wc:
+                incorrect_patterns.append(row)
+
+        correct_patterns.sort(
+            key=lambda x: (
+                float(x.get("signal_strength", 0.0) or 0.0),
+                float(x.get("total_weighted", 0.0) or 0.0),
+            ),
+            reverse=True,
+        )
+        incorrect_patterns.sort(
+            key=lambda x: (
+                float(x.get("signal_strength", 0.0) or 0.0),
+                float(x.get("total_weighted", 0.0) or 0.0),
+            ),
+            reverse=True,
+        )
+        return {
+            "applied": bool(correct_patterns or incorrect_patterns),
+            "records_loaded": len(records),
+            "profiles_loaded": len(profile),
+            "high_confidence_correct_patterns": correct_patterns[:3],
+            "high_confidence_incorrect_patterns": incorrect_patterns[:3],
+            "_raw_records": records,
+            "_raw_profile": profile,
+        }
 
     @staticmethod
     def _normalize_executor_risks(raw: object) -> list[dict] | None:

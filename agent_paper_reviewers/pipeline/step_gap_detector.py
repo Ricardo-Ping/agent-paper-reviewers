@@ -111,7 +111,7 @@ class GapDetectorStep(PipelineStep):
         citation_gaps = self._collect_citation_gaps(citation_graph, passages)
         rule_gaps.extend(citation_gaps)
 
-        semantic_gaps = self._detect_semantic_gaps_with_executor(
+        semantic_gaps, semantic_meta = self._detect_semantic_gaps_with_executor(
             ctx=ctx,
             paper_structured=paper_structured if isinstance(paper_structured, dict) else {},
             required_checks=required_checks if isinstance(required_checks, list) else [],
@@ -125,6 +125,9 @@ class GapDetectorStep(PipelineStep):
             semantic_gaps=semantic_gaps if isinstance(semantic_gaps, list) else [],
             rule_gaps=rule_gaps if isinstance(rule_gaps, list) else [],
         )
+        if isinstance(semantic_meta, dict):
+            merge_meta["semantic_executor_status"] = semantic_meta.get("executor_status", "not_used")
+            merge_meta["semantic_executor_fallback"] = bool(semantic_meta.get("executor_fallback", False))
 
         # De-duplicate by description and keep deterministic ordering.
         dedup: list[dict] = []
@@ -141,11 +144,14 @@ class GapDetectorStep(PipelineStep):
         payload = {
             "gaps": dedup,
             "source": merge_meta.get("source", "rule_fallback"),
+            "gap_detection_source": merge_meta.get("source", "rule_fallback"),
             "semantic_primary_used": bool(merge_meta.get("semantic_primary_used", False)),
             "rule_fallback_used": bool(merge_meta.get("rule_fallback_used", True)),
             "semantic_gaps_count": int(merge_meta.get("semantic_gaps_count", 0)),
             "rule_gaps_count": int(merge_meta.get("rule_gaps_count", 0)),
             "guardrail_rule_gaps_count": int(merge_meta.get("guardrail_rule_gaps_count", 0)),
+            "semantic_executor_status": str(merge_meta.get("semantic_executor_status", "not_used")),
+            "semantic_executor_fallback": bool(merge_meta.get("semantic_executor_fallback", False)),
             "required_checks": required_checks,
             "required_check_specs": required_check_specs if isinstance(required_check_specs, dict) else {},
             "required_check_outcomes": check_outcomes,
@@ -154,6 +160,14 @@ class GapDetectorStep(PipelineStep):
             ),
             "citation_graph_summary": citation_graph.get("stats", {}),
         }
+        p0_gaps = [
+            g for g in dedup
+            if isinstance(g, dict) and str(g.get("severity_hint", "P2")).upper() == "P0"
+        ]
+        if p0_gaps and payload["semantic_executor_fallback"]:
+            ctx.add_qa_issue("gap_detector_warning:p0_gaps_detected_but_semantic_executor_fallback")
+        if p0_gaps and payload["gap_detection_source"] == "rule_fallback":
+            ctx.add_qa_issue("gap_detector_warning:p0_gaps_rule_only_manual_review_required")
         ctx.artifacts["gaps"] = payload
         ctx.dump_json("artifacts/gaps.json", payload)
 
@@ -236,9 +250,9 @@ class GapDetectorStep(PipelineStep):
         alignments: list[dict],
         rule_gaps: list[dict],
         passages: list[dict],
-    ) -> list[dict]:
+    ) -> tuple[list[dict], dict]:
         if self.executor is None:
-            return []
+            return [], {"executor_status": "not_configured", "executor_fallback": False}
 
         sections = paper_structured.get("sections", []) if isinstance(paper_structured, dict) else []
         section_briefs: list[dict] = []
@@ -311,22 +325,26 @@ class GapDetectorStep(PipelineStep):
         )
 
         result = self.executor.execute(spec_task)
+        fallback_detected = False
         for warning in result.warnings:
-            if "api_key_missing_use_fallback" in warning:
-                continue
             ctx.add_qa_issue(f"gap_detector_agent_warning:{warning}")
+            lower = str(warning).lower()
+            if "fallback" in lower or "api_key_missing" in lower:
+                fallback_detected = True
+        if fallback_detected:
+            return [], {"executor_status": "fallback", "executor_fallback": True}
         if not result.ok:
-            return []
+            return [], {"executor_status": "error", "executor_fallback": False}
 
         payload: Any = result.output
         if isinstance(payload, dict) and isinstance(payload.get("response"), dict):
             payload = payload.get("response")
         if not isinstance(payload, dict):
-            return []
+            return [], {"executor_status": "invalid_output", "executor_fallback": False}
 
         rows = payload.get("gaps", [])
         if not isinstance(rows, list) or not rows:
-            return []
+            return [], {"executor_status": "empty_output", "executor_fallback": False}
 
         by_pid = {
             str(row.get("id", "")).strip(): row
@@ -367,7 +385,7 @@ class GapDetectorStep(PipelineStep):
                 item["fix_action"] = fix_action
             item["source"] = "agent_semantic"
             out.append(item)
-        return out
+        return out, {"executor_status": "ok", "executor_fallback": False}
 
     def _evaluate_required_check(
         self,

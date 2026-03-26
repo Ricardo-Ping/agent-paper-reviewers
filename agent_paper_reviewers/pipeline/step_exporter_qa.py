@@ -180,26 +180,9 @@ class ExporterAndQAGateStep(PipelineStep):
             action_en_md = str(agent_en["002"])
             rebuttal_en_md = str(agent_en["003"])
         else:
-            decision_en_md = ExporterAndQAGateStep._student_decision_en(
-                ctx=ctx,
-                decision=decision_en,
-                diagnosis=diagnosis_en,
-                risk_index=risk_index,
-                remediation_tasks=remediation_tasks,
-                risk_to_review=risk_to_review,
-            )
-            action_en_md = ExporterAndQAGateStep._student_actions_en(
-                diagnosis=diagnosis_en,
-                remediation_tasks=remediation_tasks,
-                risk_index=risk_index,
-                risk_to_review=risk_to_review,
-            )
-            rebuttal_en_md = ExporterAndQAGateStep._student_rebuttal(
-                bundle=rebuttal_en,
-                risk_to_review=risk_to_review,
-                risk_index=risk_index,
-                zh=False,
-            )
+            ctx.add_qa_issue("student_pack_generation_failed:real_agent_output_required")
+            ctx.status = RunStatus.PARTIAL_FAILED
+            decision_en_md, action_en_md, rebuttal_en_md = ExporterAndQAGateStep._student_pack_error_notice_en()
 
         deliverables: dict[str, object] = {
             "student_pack/en/001-submission-decision.md": decision_en_md,
@@ -218,26 +201,9 @@ class ExporterAndQAGateStep(PipelineStep):
                 action_zh_md = str(agent_zh["002"])
                 rebuttal_zh_md = str(agent_zh["003"])
             else:
-                decision_zh_md = ExporterAndQAGateStep._student_decision_zh(
-                    ctx=ctx,
-                    decision=decision_zh,
-                    diagnosis=diagnosis_zh,
-                    risk_index=risk_index,
-                    remediation_tasks=remediation_tasks,
-                    risk_to_review=risk_to_review,
-                )
-                action_zh_md = ExporterAndQAGateStep._student_actions_zh(
-                    diagnosis=diagnosis_zh,
-                    remediation_tasks=remediation_tasks,
-                    risk_index=risk_index,
-                    risk_to_review=risk_to_review,
-                )
-                rebuttal_zh_md = ExporterAndQAGateStep._student_rebuttal(
-                    bundle=rebuttal_zh,
-                    risk_to_review=risk_to_review,
-                    risk_index=risk_index,
-                    zh=True,
-                )
+                ctx.add_qa_issue("student_pack_generation_failed:real_agent_output_required_zh")
+                ctx.status = RunStatus.PARTIAL_FAILED
+                decision_zh_md, action_zh_md, rebuttal_zh_md = ExporterAndQAGateStep._student_pack_error_notice_zh()
 
             deliverables.update(
                 {
@@ -251,6 +217,38 @@ class ExporterAndQAGateStep(PipelineStep):
         else:
             deliverables["START_HERE.md"] = deliverables["START_HERE.en.md"]
         return deliverables
+
+    @staticmethod
+    def _student_pack_error_notice_en() -> tuple[str, str, str]:
+        notice = (
+            "Student pack generation is blocked because real Agent output is required.\n"
+            "Fallback template output is disabled to avoid low-quality watered-down guidance.\n"
+            "Please configure a live executor backend (OPENAI/Anthropic/OpenClaw/other agent API) and rerun."
+        )
+        return (
+            "# 001 Submission Decision\n\n"
+            f"- Status: generation blocked\n- Reason: {notice}\n",
+            "# 002 Action Items\n\n"
+            f"- Status: generation blocked\n- Reason: {notice}\n",
+            "# 003 Rebuttal Draft\n\n"
+            f"- Status: generation blocked\n- Reason: {notice}\n",
+        )
+
+    @staticmethod
+    def _student_pack_error_notice_zh() -> tuple[str, str, str]:
+        notice = (
+            "Student pack 必须由真实 Agent 生成。\n"
+            "为避免低质量模板注水，系统已禁用 deterministic fallback。\n"
+            "请配置可用的在线执行器（OPENAI/Anthropic/OpenClaw/其他 agent API）后重新运行。"
+        )
+        return (
+            "# 001 投稿决策\n\n"
+            f"- 状态：生成被阻止\n- 原因：{notice}\n",
+            "# 002 行动清单\n\n"
+            f"- 状态：生成被阻止\n- 原因：{notice}\n",
+            "# 003 Rebuttal 草稿\n\n"
+            f"- 状态：生成被阻止\n- 原因：{notice}\n",
+        )
 
 
     @staticmethod

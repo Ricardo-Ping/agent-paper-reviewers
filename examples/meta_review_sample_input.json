@@ -30,7 +30,7 @@
   },
   "options": {
     "language_mode": "en",
-    "executor_backend": "codex",
+    "executor_backend": "local_vllm",
     "mcp_backend": "http",
     "always_export_pdf": false
   }

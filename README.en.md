@@ -47,6 +47,30 @@ The unique value here is an executable loop: risk detection -> evidence alignmen
 - Pluggable executors: `codex|agent_api|openai|anthropic|qwen|local_vllm`.
 - Unknown-venue fallback chain: local `_fallback` rule -> OpenReview dynamic discovery -> executor bootstrap draft.
 
+## Recommended Mode (Agent Analysis + Skill Toolkit)
+Use this project as a toolkit layer, and let your preferred agent handle semantic reasoning.
+
+1. Use toolkit commands to fetch structured context (`tool-parse-paper`, `tool-venue-profile`).
+2. Let the agent read/analyze the paper (claims, gaps, risk ranking, rebuttal drafting).
+3. Use toolkit formatter commands to output standardized student-facing files.
+
+### Tool-only CLI commands
+```bash
+# 1) Resolve venue policy profile
+python -m agent_paper_reviewers.cli tool-venue-profile --venue ICLR --year 2026 --json
+
+# 2) Parse paper into structured JSON
+python -m agent_paper_reviewers.cli tool-parse-paper --paper-path /abs/path/paper.pdf --output parsed_paper.json
+
+# 3) Get the agent-analysis template contract
+python -m agent_paper_reviewers.cli tool-format-template --template student_pack_analysis --output analysis_template.json
+
+# 4) Format agent analysis to 3 student-facing markdown files
+python -m agent_paper_reviewers.cli tool-format-student-pack --analysis-json agent_analysis.json --output-dir output/student_pack/en --language en
+```
+
+Compatibility: the full `run --input ...` pipeline is still available for one-shot runs.
+
 ## One-line command for Agent
 You can tell your Agent directly:
 

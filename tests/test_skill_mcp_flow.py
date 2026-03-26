@@ -20,7 +20,7 @@ def test_skill_flow_and_mcp_runtime_outputs(tmp_path: Path) -> None:
         "claims": ["Claim one."],
         "options": {
             "language_mode": "en",
-            "executor_backend": "codex",
+            "executor_backend": "local_vllm",
             "mcp_backend": "http",
             "always_export_pdf": False,
         },
@@ -37,5 +37,6 @@ def test_skill_flow_and_mcp_runtime_outputs(tmp_path: Path) -> None:
     assert "VenueProfileResolver" in skill_flow["steps"]
     assert mcp_runtime["provider"] in {"http_mcp", "noop_mcp"}
     assert "openreview_policy_resolver" in mcp_runtime["capabilities"]
+
 
 

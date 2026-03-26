@@ -246,6 +246,8 @@ def apply_feedback_profile(risks: list[dict], profile: dict[str, dict[str, Any]]
             row["feedback_adjustment"] = {
                 "action": action,
                 "original_score": round(original, 3),
+                "confidence_before": round(original, 3),
+                "confidence_after": round(new_score, 3),
                 "correct": correct,
                 "incorrect": incorrect,
                 "weighted_correct": round(weighted_correct, 3),

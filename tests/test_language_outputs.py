@@ -23,7 +23,7 @@ def sample_input(tmp_path: Path) -> Path:
         "claims": ["We improve accuracy over baselines."],
         "options": {
             "language_mode": "en_zh",
-            "executor_backend": "codex",
+            "executor_backend": "local_vllm",
             "always_export_pdf": False,
         },
     }

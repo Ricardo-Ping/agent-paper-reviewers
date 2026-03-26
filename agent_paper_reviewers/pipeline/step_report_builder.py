@@ -3,6 +3,7 @@
 import re
 
 from ..executors.base import ExecutorAdapter
+from ..executors.deterministic import DeterministicExecutor
 from ..models import TaskSpec
 from ..services.translator import Translator
 from .base import PipelineContext, PipelineStep
@@ -170,6 +171,9 @@ class ReportBuilderStep(PipelineStep):
     ) -> dict | None:
         if self.executor is None:
             return None
+        if isinstance(self.executor, DeterministicExecutor):
+            ctx.add_qa_issue("report_builder_student_pack_error:deterministic_executor_not_allowed")
+            return None
 
         spec = TaskSpec(
             task_type="student_pack_generate",
@@ -181,6 +185,7 @@ class ReportBuilderStep(PipelineStep):
                 "venue": ctx.input_data.venue.name,
                 "year": ctx.input_data.venue.year,
                 "language_mode": ctx.input_data.options.language_mode.value,
+                "require_real_llm": True,
                 "decision_json": decision_json,
                 "diagnosis_json": diagnosis_json,
                 "rebuttal_bundle_en": rebuttal_bundle_en if isinstance(rebuttal_bundle_en, dict) else {},
@@ -193,10 +198,12 @@ class ReportBuilderStep(PipelineStep):
         )
         result = self.executor.execute(spec)
         for warning in result.warnings:
-            if "api_key_missing_use_fallback" in warning:
-                continue
             ctx.add_qa_issue(f"report_builder_student_pack_warning:{warning}")
+        if any("fallback" in str(w).lower() for w in result.warnings):
+            ctx.add_qa_issue("report_builder_student_pack_error:real_llm_required_no_fallback")
+            return None
         if not result.ok:
+            ctx.add_qa_issue("report_builder_student_pack_error:executor_failed")
             return None
 
         payload = result.output
@@ -1458,6 +1465,10 @@ class ReportBuilderStep(PipelineStep):
                 }
             )
 
+        p0_rows = [x for x in diagnosis_items if str(x.get("severity", "")).upper() == "P0"]
+        if p0_rows and all(str(x.get("generation_source", "")) == "executor_fallback" for x in p0_rows):
+            ctx.add_qa_issue("diagnosis_warning:p0_items_all_executor_fallback_manual_check_required")
+
         return {
             "decision": full_json.get("decision"),
             "summary": {
@@ -1892,8 +1903,11 @@ class ReportBuilderStep(PipelineStep):
     def _check_trace_for_risk(risk: dict, required_check_outcomes: object) -> dict:
         if not isinstance(required_check_outcomes, list):
             return {}
+        risk_gap_code = ReportBuilderStep._infer_gap_code_for_risk(risk)
         reason = str(risk.get("reason", "")).lower()
         priority_codes: list[str] = []
+        if risk_gap_code:
+            priority_codes.append(risk_gap_code)
         if "significance" in reason or "statistical" in reason:
             priority_codes.extend(["missing_significance", "significance_reporting"])
         if "baseline" in reason:
@@ -1905,18 +1919,48 @@ class ReportBuilderStep(PipelineStep):
         if "related work" in reason or "citation" in reason:
             priority_codes.append("missing_top_venue_related_work_coverage")
 
+        seen_codes: list[str] = []
+        for code in priority_codes:
+            code_norm = str(code).strip().lower()
+            if code_norm and code_norm not in seen_codes:
+                seen_codes.append(code_norm)
+        priority_codes = seen_codes
+
         for code in priority_codes:
             for row in required_check_outcomes:
                 if not isinstance(row, dict):
                     continue
-                if str(row.get("gap_code", "")).strip().lower() == code:
-                    return row
+                row_code = str(row.get("gap_code", "")).strip().lower()
+                if row_code and (row_code == code or code in row_code or row_code in code):
+                    payload = dict(row)
+                    payload["matched_by"] = "risk_gap_code_or_reason"
+                    return payload
 
+        reason_tokens = set(re.findall(r"[a-zA-Z]{4,}", reason))
+        best_row: dict | None = None
+        best_score = 0
         for row in required_check_outcomes:
             if not isinstance(row, dict):
                 continue
-            if not bool(row.get("passed", True)):
-                return row
+            if bool(row.get("passed", True)):
+                continue
+            row_blob = " ".join(
+                [
+                    str(row.get("check_name", "")),
+                    str(row.get("gap_code", "")),
+                    str(row.get("description", "")),
+                ]
+            ).lower()
+            row_tokens = set(re.findall(r"[a-zA-Z]{4,}", row_blob))
+            overlap = len(reason_tokens & row_tokens)
+            if overlap > best_score:
+                best_score = overlap
+                best_row = row
+        if best_row is not None and best_score >= 2:
+            payload = dict(best_row)
+            payload["matched_by"] = "reason_overlap"
+            payload["match_overlap_count"] = best_score
+            return payload
         return {}
 
     @staticmethod
@@ -1928,7 +1972,10 @@ class ReportBuilderStep(PipelineStep):
         check_trace: dict,
     ) -> list[dict]:
         actions: list[dict] = []
-        for task in linked_tasks[:2]:
+        reason = str(risk.get("reason", "")).lower()
+        gap_code = ReportBuilderStep._infer_gap_code_for_risk(risk)
+
+        for task in linked_tasks[:1]:
             if not isinstance(task, dict):
                 continue
             protocol = task.get("protocol", [])
@@ -1952,50 +1999,103 @@ class ReportBuilderStep(PipelineStep):
                 }
             )
 
-        if not actions:
-            reason = str(risk.get("reason", "")).lower()
-            if "statistical" in reason or "significance" in reason:
-                actions.extend(
-                    [
-                        {
-                            "action": "Run multi-seed evaluation (>=3 seeds) for all primary metrics.",
-                            "why": "Single-run metrics are often judged as unstable evidence.",
-                            "expected_gain": "Improves soundness and experiment reliability.",
-                            "section_target": "Experiments / Main Results",
-                            "effort": "M",
-                        },
-                        {
-                            "action": "Report significance tests and confidence intervals for headline gains.",
-                            "why": "Reviewers expect p-value/CI support for key claims.",
-                            "expected_gain": "Closes a common P1 reject trigger on statistical validity.",
-                            "section_target": "Experiments / Statistical Analysis",
-                            "effort": "S",
-                        },
-                    ]
-                )
-            elif "baseline" in reason:
-                actions.append(
-                    {
-                        "action": "Add stronger matched-budget baselines and fairness settings.",
-                        "why": "Baseline fairness is a core reviewer checkpoint.",
-                        "expected_gain": "Improves credibility of comparative claims.",
-                        "section_target": "Experiments / Baselines",
-                        "effort": "M",
-                    }
-                )
-            else:
-                actions.append(
-                    {
-                        "action": "Add one direct evidence block per criticized claim.",
-                        "why": "Claim-evidence one-to-one mapping reduces reviewer ambiguity.",
-                        "expected_gain": "Improves confidence and rebuttal defensibility.",
-                        "section_target": "Experiments / Analysis",
-                        "effort": "M",
-                    }
-                )
+        if "statistical" in reason or "significance" in reason or gap_code in {
+            "missing_significance",
+            "statistical_significance",
+            "significance_reporting",
+        }:
+            actions.append(
+                {
+                    "action": "Add multi-seed (>=5) mean±std and pairwise significance test tables for every headline metric.",
+                    "why": "Reviewers discount single-run improvements without uncertainty and test statistics.",
+                    "expected_gain": "Removes a high-frequency reject trigger on experimental soundness.",
+                    "section_target": "Experiments / Statistical Analysis",
+                    "effort": "M",
+                }
+            )
+        elif "baseline" in reason or gap_code in {
+            "missing_baseline",
+            "baseline_coverage",
+            "missing_baseline_fairness",
+            "baseline_config_fairness",
+        }:
+            actions.append(
+                {
+                    "action": "Expand baseline table to include classical + recent SOTA under matched data, hardware, and tuning budget.",
+                    "why": "Venue reviewers usually reject comparisons that are incomplete or unfair.",
+                    "expected_gain": "Strengthens comparative credibility and novelty positioning.",
+                    "section_target": "Experiments / Baselines",
+                    "effort": "M",
+                }
+            )
+        elif "ablation" in reason or gap_code in {"missing_ablation", "ablation_completeness"}:
+            actions.append(
+                {
+                    "action": "Add component-level ablations (remove/replace each key module) and summarize deltas in one attribution table.",
+                    "why": "Without controlled ablation, contribution attribution remains weak.",
+                    "expected_gain": "Improves argument that each component is necessary.",
+                    "section_target": "Experiments / Ablation",
+                    "effort": "M",
+                }
+            )
+        elif "reproduc" in reason or gap_code in {
+            "missing_reproducibility",
+            "reproducibility_details",
+            "missing_system_setting_reproducibility",
+            "system_setting_reproducibility",
+        }:
+            actions.append(
+                {
+                    "action": "Publish a reproducibility appendix with full environment matrix (hardware, software versions, seeds, configs, run scripts).",
+                    "why": "System and implementation ambiguity leads to low reviewer trust.",
+                    "expected_gain": "Reduces reproducibility concerns and meta-review pushback.",
+                    "section_target": "Appendix / Reproducibility",
+                    "effort": "S",
+                }
+            )
+        elif gap_code in {"missing_scalability_evaluation", "scalability_evaluation"} or "scalability" in reason:
+            actions.append(
+                {
+                    "action": "Add scale-up/scale-out experiments with throughput-latency curves and cost breakdown by workload size.",
+                    "why": "Top systems venues expect explicit scalability evidence.",
+                    "expected_gain": "Converts a likely systems rejection point into a strength.",
+                    "section_target": "Experiments / Scalability",
+                    "effort": "L",
+                }
+            )
+        elif gap_code in {"missing_top_venue_related_work_coverage", "related_work_coverage"} or "related work" in reason:
+            actions.append(
+                {
+                    "action": "Add a focused related-work matrix versus recent top-venue papers with one-row advantage/limitation comparison.",
+                    "why": "Weak positioning causes reviewers to view novelty as incremental.",
+                    "expected_gain": "Clarifies contribution boundary and novelty context.",
+                    "section_target": "Related Work / Discussion",
+                    "effort": "S",
+                }
+            )
+        elif gap_code in {"section_ratio_imbalance"}:
+            actions.append(
+                {
+                    "action": "Rebalance manuscript structure by moving implementation details to appendix and expanding experiment/result analysis narrative.",
+                    "why": "Section imbalance makes evidence hard to verify quickly.",
+                    "expected_gain": "Improves readability and reviewer confidence in argument flow.",
+                    "section_target": "Introduction / Experiments / Discussion",
+                    "effort": "M",
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "action": "Add one claim-to-evidence mapping table with explicit anchors (section/table/figure) for each contested claim.",
+                    "why": "One-to-one mapping reduces reviewer ambiguity and rebuttal risk.",
+                    "expected_gain": "Improves confidence and makes rebuttal defensible.",
+                    "section_target": "Experiments / Analysis",
+                    "effort": "M",
+                }
+            )
 
         check_name = str(check_trace.get("check_name", "")).strip()
-        if check_name:
+        if check_name and ReportBuilderStep._is_check_trace_relevant_to_risk(check_trace, risk):
             actions.append(
                 {
                     "action": f"Close required check `{check_name}` with a dedicated subsection.",
@@ -2009,9 +2109,15 @@ class ReportBuilderStep(PipelineStep):
         contradiction_claims = [
             str(row.get("claim_id", "")).strip()
             for row in related_claims
-            if isinstance(row, dict) and float(row.get("contradiction_score", 0.0) or 0.0) >= 0.45
+            if isinstance(row, dict) and float(row.get("contradiction_score", 0.0) or 0.0) >= 0.6
         ]
-        if contradiction_claims:
+        contradiction_relevant = (
+            "claim" in reason
+            or "evidence" in reason
+            or "contradiction" in reason
+            or gap_code in {"weak_claim_alignment", "claim_evidence_alignment", "missing_significance"}
+        )
+        if contradiction_claims and contradiction_relevant:
             actions.append(
                 {
                     "action": (
@@ -2025,7 +2131,60 @@ class ReportBuilderStep(PipelineStep):
                 }
             )
 
-        return actions[:4]
+        deduped: list[dict] = []
+        seen_actions: set[str] = set()
+        for row in actions:
+            action_text = str(row.get("action", "")).strip()
+            key = action_text.lower()
+            if not action_text or key in seen_actions:
+                continue
+            seen_actions.add(key)
+            deduped.append(row)
+        return deduped[:4]
+
+    @staticmethod
+    def _infer_gap_code_for_risk(risk: dict) -> str:
+        direct = str(risk.get("gap_code") or risk.get("code") or "").strip().lower()
+        if direct:
+            return direct
+        reason = str(risk.get("reason", "")).lower()
+        mapping = [
+            ("missing_significance", ("significance", "statistical", "p-value", "confidence interval")),
+            ("missing_baseline", ("baseline", "sota", "comparison")),
+            ("ablation_completeness", ("ablation", "component removal", "without module")),
+            ("system_setting_reproducibility", ("reproduc", "seed", "environment", "hardware")),
+            ("missing_scalability_evaluation", ("scalability", "scale-up", "scale out", "throughput")),
+            ("missing_top_venue_related_work_coverage", ("related work", "citation", "prior work")),
+            ("weak_claim_alignment", ("claim", "evidence alignment", "unsupported")),
+            ("section_ratio_imbalance", ("section ratio", "imbalance")),
+        ]
+        for code, keywords in mapping:
+            if any(k in reason for k in keywords):
+                return code
+        return ""
+
+    @staticmethod
+    def _is_check_trace_relevant_to_risk(check_trace: dict, risk: dict) -> bool:
+        if not isinstance(check_trace, dict):
+            return False
+        row_code = str(check_trace.get("gap_code", "")).strip().lower()
+        risk_code = ReportBuilderStep._infer_gap_code_for_risk(risk)
+        if row_code and risk_code and (row_code == risk_code or row_code in risk_code or risk_code in row_code):
+            return True
+        matched_by = str(check_trace.get("matched_by", "")).strip().lower()
+        if matched_by in {"risk_gap_code_or_reason", "reason_overlap"}:
+            return True
+        reason = str(risk.get("reason", "")).lower()
+        reason_tokens = set(re.findall(r"[a-zA-Z]{4,}", reason))
+        check_blob = " ".join(
+            [
+                str(check_trace.get("check_name", "")),
+                str(check_trace.get("gap_code", "")),
+                str(check_trace.get("description", "")),
+            ]
+        ).lower()
+        check_tokens = set(re.findall(r"[a-zA-Z]{4,}", check_blob))
+        return len(reason_tokens & check_tokens) >= 2
 
     @staticmethod
     def _default_expected_impact(risk: dict, fix_actions: list[dict]) -> str:

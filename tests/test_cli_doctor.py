@@ -2,9 +2,11 @@
 
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 import agent_paper_reviewers.cli as cli
+from agent_paper_reviewers.models import ReviewRunInput
 from agent_paper_reviewers.services.pdf_export import PdfToolchainStatus
 
 
@@ -61,3 +63,44 @@ def test_doctor_json_reports_pdf_ready(monkeypatch) -> None:
     payload = json.loads(result.stdout)
     assert payload["pdf_export"]["ready"] is True
     assert payload["pdf_export"]["toolchain"]["preferred_engine"] == "xelatex"
+
+
+def test_validate_executor_or_die_for_openai_backend(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AGENT_PAPER_REVIEWERS_CODEX_API_KEY", raising=False)
+    paper = tmp_path / "paper.md"
+    paper.write_text("# T", encoding="utf-8")
+    review_input = ReviewRunInput.model_validate(
+        {
+            "paper": {"format": "md", "path": str(paper)},
+            "venue": {"name": "ICLR", "year": 2026},
+            "options": {"executor_backend": "openai"},
+        }
+    )
+    with pytest.raises(Exception):
+        cli._validate_executor_or_die(review_input)
+
+
+def test_run_command_fails_fast_when_openai_key_missing(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AGENT_PAPER_REVIEWERS_CODEX_API_KEY", raising=False)
+    paper = tmp_path / "paper.md"
+    paper.write_text("# T", encoding="utf-8")
+    input_json = tmp_path / "input.json"
+    input_json.write_text(
+        json.dumps(
+            {
+                "paper": {"format": "md", "path": str(paper)},
+                "venue": {"name": "ICLR", "year": 2026},
+                "claims": ["c1"],
+                "options": {"executor_backend": "openai"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", "--input", str(input_json), "--output-dir", str(tmp_path / "out")])
+    assert result.exit_code != 0
+    text = (result.stdout or "") + (result.stderr or "") + (result.output or "")
+    assert "FATAL: No real model backend is ready" in text

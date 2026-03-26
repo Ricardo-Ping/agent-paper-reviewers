@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -50,7 +50,7 @@ def test_unknown_venue_can_use_mcp_discovery(tmp_path: Path) -> None:
         "claims": ["Claim one."],
         "options": {
             "language_mode": "en",
-            "executor_backend": "codex",
+            "executor_backend": "local_vllm",
             "mcp_backend": "http",
             "always_export_pdf": False,
         },
@@ -87,7 +87,7 @@ def test_unknown_venue_executor_bootstrap_does_not_shrink_fallback_checks(tmp_pa
         "claims": ["Claim one."],
         "options": {
             "language_mode": "en",
-            "executor_backend": "codex",
+            "executor_backend": "local_vllm",
             "mcp_backend": "disabled",
             "always_export_pdf": False,
         },
@@ -121,3 +121,4 @@ def test_unknown_venue_executor_bootstrap_does_not_shrink_fallback_checks(tmp_pa
     assert "top_venue_related_work_coverage" in checks
     assert "baseline_coverage" in specs
     assert "statistical_significance" in specs
+

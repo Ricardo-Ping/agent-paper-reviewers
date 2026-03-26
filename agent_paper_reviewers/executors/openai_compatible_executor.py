@@ -14,6 +14,13 @@ from .utils import build_llm_prompt, normalize_output
 class OpenAICompatibleExecutor(ExecutorAdapter):
     """Generic executor for OpenAI-compatible chat completion endpoints."""
 
+    DEFAULT_MODEL_PROFILE_MAP = {
+        "judge": "gpt-4.1-mini",
+        "extract": "gpt-4o-mini",
+        "generate": "gpt-4o",
+        "translate": "gpt-4o-mini",
+    }
+
     def __init__(
         self,
         *,
@@ -23,6 +30,7 @@ class OpenAICompatibleExecutor(ExecutorAdapter):
         key_header: str = "Authorization",
         key_prefix: str = "Bearer ",
         silent_fallback: bool = False,
+        model_profile_map: dict[str, str] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -30,17 +38,25 @@ class OpenAICompatibleExecutor(ExecutorAdapter):
         self.key_header = key_header
         self.key_prefix = key_prefix
         self.silent_fallback = silent_fallback
+        self.model_profile_map = model_profile_map or {}
         self._fallback = DeterministicExecutor()
 
     def execute(self, spec: TaskSpec) -> TaskResult:
+        strict_real_llm = bool(spec.context.get("require_real_llm", False))
         if not self.api_key:
+            if strict_real_llm:
+                return TaskResult(
+                    ok=False,
+                    warnings=["executor_api_key_missing_real_llm_required"],
+                )
             fallback = self._fallback.execute(spec)
             if not self.silent_fallback:
                 fallback.warnings.append("executor_api_key_missing_use_fallback")
             return fallback
 
         timeout = int(spec.context.get("timeout", 120))
-        model = str(spec.context.get("model", self.default_model))
+        model_profile = str(spec.model_profile or "").strip().lower()
+        model = self._resolve_model(spec, model_profile)
         prompt = build_llm_prompt(spec)
         payload = {
             "model": model,
@@ -68,10 +84,32 @@ class OpenAICompatibleExecutor(ExecutorAdapter):
             text = self._extract_text(data)
             return TaskResult(ok=True, output=normalize_output(spec, text, raw=data))
         except Exception as exc:  # noqa: BLE001
+            if strict_real_llm:
+                return TaskResult(
+                    ok=False,
+                    warnings=[
+                        f"openai_compatible_executor_failed:{exc}",
+                        "real_llm_required_no_fallback",
+                    ],
+                )
             fallback = self._fallback.execute(spec)
             if not self.silent_fallback:
                 fallback.warnings.append(f"openai_compatible_executor_failed:{exc}")
             return fallback
+
+    def _resolve_model(self, spec: TaskSpec, model_profile: str) -> str:
+        explicit_model = str(spec.context.get("model", "")).strip()
+        if explicit_model:
+            return explicit_model
+
+        env_key = f"AGENT_PAPER_REVIEWERS_MODEL_PROFILE_{model_profile.upper()}"
+        if model_profile and os.getenv(env_key):
+            return str(os.getenv(env_key)).strip()
+
+        mapped = self.model_profile_map.get(model_profile, "")
+        if mapped:
+            return mapped
+        return self.default_model
 
     @staticmethod
     def _extract_text(data: Any) -> str:
@@ -92,6 +130,7 @@ def build_openai_executor() -> OpenAICompatibleExecutor:
         base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         api_key=os.getenv("OPENAI_API_KEY"),
         default_model=os.getenv("AGENT_PAPER_REVIEWERS_OPENAI_MODEL", "gpt-4.1-mini"),
+        model_profile_map=OpenAICompatibleExecutor.DEFAULT_MODEL_PROFILE_MAP,
     )
 
 
@@ -102,6 +141,7 @@ def build_qwen_executor() -> OpenAICompatibleExecutor:
         ),
         api_key=os.getenv("QWEN_API_KEY"),
         default_model=os.getenv("AGENT_PAPER_REVIEWERS_QWEN_MODEL", "qwen-plus"),
+        model_profile_map={},
     )
 
 
@@ -110,13 +150,16 @@ def build_local_vllm_executor() -> OpenAICompatibleExecutor:
         base_url=os.getenv("LOCAL_VLLM_BASE_URL", "http://127.0.0.1:8000/v1"),
         api_key=os.getenv("LOCAL_VLLM_API_KEY", "EMPTY"),
         default_model=os.getenv("AGENT_PAPER_REVIEWERS_VLLM_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
-        silent_fallback=True,
+        silent_fallback=False,
+        model_profile_map={},
     )
 
 
 def build_codex_executor() -> OpenAICompatibleExecutor:
     return OpenAICompatibleExecutor(
         base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-        api_key=os.getenv("OPENAI_API_KEY"),
+        api_key=os.getenv("OPENAI_API_KEY")
+        or os.getenv("AGENT_PAPER_REVIEWERS_CODEX_API_KEY"),
         default_model=os.getenv("AGENT_PAPER_REVIEWERS_CODEX_MODEL", "gpt-5.4-mini"),
+        model_profile_map=OpenAICompatibleExecutor.DEFAULT_MODEL_PROFILE_MAP,
     )

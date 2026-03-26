@@ -49,7 +49,7 @@ def test_venue_profile_merges_openreview_overrides(tmp_path: Path) -> None:
         "claims": ["Claim one."],
         "options": {
             "language_mode": "en",
-            "executor_backend": "codex",
+            "executor_backend": "local_vllm",
             "mcp_backend": "http",
             "always_export_pdf": False,
         },
@@ -100,7 +100,7 @@ def test_venue_profile_silent_fallback_when_mcp_missing(tmp_path: Path) -> None:
         "claims": ["Claim one."],
         "options": {
             "language_mode": "en",
-            "executor_backend": "codex",
+            "executor_backend": "local_vllm",
             "mcp_backend": "disabled",
             "always_export_pdf": False,
         },
@@ -137,7 +137,7 @@ def test_venue_profile_silent_fallback_when_mcp_fails_or_returns_empty_policy(tm
         "claims": ["Claim one."],
         "options": {
             "language_mode": "en",
-            "executor_backend": "codex",
+            "executor_backend": "local_vllm",
             "mcp_backend": "http",
             "always_export_pdf": False,
         },
@@ -163,3 +163,4 @@ def test_venue_profile_silent_fallback_when_mcp_fails_or_returns_empty_policy(tm
         assert venue_profile["policy_needs_manual_check"] is False
         assert ctx.qa_issues == []
         assert venue_profile["profile"]["rebuttal_policy"]["per_review_char_limit"] == 2500
+

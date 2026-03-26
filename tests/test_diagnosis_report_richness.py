@@ -39,7 +39,7 @@ def test_diagnosis_report_is_actionable_and_not_placeholder(tmp_path: Path) -> N
         ],
         "options": {
             "language_mode": "en",
-            "executor_backend": "openai",
+            "executor_backend": "local_vllm",
             "mcp_backend": "disabled",
             "always_export_pdf": False,
         },

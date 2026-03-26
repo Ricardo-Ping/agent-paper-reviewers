@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 
 from ..executors.base import ExecutorAdapter
 from ..models import EvidenceRef, RebuttalBundle, RebuttalItem, TaskSpec
@@ -11,6 +12,9 @@ from .base import PipelineContext, PipelineStep
 
 class RebuttalComposerStep(PipelineStep):
     name = "RebuttalComposer"
+    _MAX_EXECUTE_RETRIES = 2
+    _MAX_EXECUTE_TOTAL_SECONDS = 60
+    _PER_ATTEMPT_TIMEOUT_SECONDS = 45
 
     def __init__(
         self,
@@ -703,6 +707,81 @@ class RebuttalComposerStep(PipelineStep):
             hints.append(f"[see: {section} -> {passage_id}]")
         return " ".join(hints)
 
+    def _execute_with_retry(
+        self,
+        ctx: PipelineContext,
+        spec: TaskSpec,
+        *,
+        call_tag: str,
+    ):
+        if self.executor is None:
+            return None
+
+        start = time.monotonic()
+        last_result = None
+        last_error = ""
+        attempts = 0
+
+        while attempts < self._MAX_EXECUTE_RETRIES:
+            attempts += 1
+            elapsed = time.monotonic() - start
+            if elapsed >= self._MAX_EXECUTE_TOTAL_SECONDS:
+                ctx.add_qa_issue(
+                    f"rebuttal_executor_warning:{call_tag}:circuit_open_timeout_after_{int(elapsed)}s"
+                )
+                break
+
+            attempt_spec = spec.model_copy(deep=True)
+            if not isinstance(attempt_spec.context, dict):
+                attempt_spec.context = {}
+            attempt_spec.context.setdefault("timeout", self._PER_ATTEMPT_TIMEOUT_SECONDS)
+            try:
+                result = self.executor.execute(attempt_spec)
+            except Exception as exc:  # noqa: BLE001
+                last_error = str(exc).strip() or exc.__class__.__name__
+                ctx.add_qa_issue(
+                    f"rebuttal_executor_warning:{call_tag}:attempt_{attempts}_exception:{last_error[:120]}"
+                )
+                if attempts >= self._MAX_EXECUTE_RETRIES:
+                    break
+                sleep_seconds = min(0.8 * attempts, 2.0)
+                if (time.monotonic() - start + sleep_seconds) >= self._MAX_EXECUTE_TOTAL_SECONDS:
+                    ctx.add_qa_issue(
+                        f"rebuttal_executor_warning:{call_tag}:circuit_open_before_retry_attempt_{attempts+1}"
+                    )
+                    break
+                time.sleep(sleep_seconds)
+                continue
+
+            last_result = result
+            for warning in result.warnings:
+                ctx.add_qa_issue(f"rebuttal_executor_warning:{call_tag}:{warning}")
+            if result.ok:
+                return result
+            ctx.add_qa_issue(
+                f"rebuttal_executor_warning:{call_tag}:attempt_{attempts}_not_ok"
+            )
+            if attempts >= self._MAX_EXECUTE_RETRIES:
+                break
+            sleep_seconds = min(0.8 * attempts, 2.0)
+            if (time.monotonic() - start + sleep_seconds) >= self._MAX_EXECUTE_TOTAL_SECONDS:
+                ctx.add_qa_issue(
+                    f"rebuttal_executor_warning:{call_tag}:circuit_open_before_retry_attempt_{attempts+1}"
+                )
+                break
+            time.sleep(sleep_seconds)
+
+        if last_result is None:
+            if last_error:
+                ctx.add_qa_issue(
+                    f"rebuttal_executor_warning:{call_tag}:retry_exhausted_error:{last_error[:120]}"
+                )
+            else:
+                ctx.add_qa_issue(f"rebuttal_executor_warning:{call_tag}:retry_exhausted")
+            return None
+        ctx.add_qa_issue(f"rebuttal_executor_warning:{call_tag}:retry_exhausted_with_result")
+        return last_result
+
     def _compose_item_with_executor(
         self,
         ctx: PipelineContext,
@@ -748,10 +827,8 @@ class RebuttalComposerStep(PipelineStep):
             model_profile="judge",
         )
 
-        result = self.executor.execute(spec)
-        for warning in result.warnings:
-            ctx.add_qa_issue(f"rebuttal_executor_warning:{warning}")
-        if not result.ok:
+        result = self._execute_with_retry(ctx, spec, call_tag=f"{review_id}:compose")
+        if result is None or not result.ok:
             return None
 
         parsed = self._parse_executor_payload(result.output)
@@ -1068,10 +1145,8 @@ class RebuttalComposerStep(PipelineStep):
             },
             model_profile="judge",
         )
-        result = self.executor.execute(spec)
-        for warning in result.warnings:
-            ctx.add_qa_issue(f"rebuttal_executor_warning:{warning}")
-        if not result.ok:
+        result = self._execute_with_retry(ctx, spec, call_tag=f"{review_id}:precheck")
+        if result is None or not result.ok:
             return None
 
         data = result.output
@@ -1535,10 +1610,8 @@ class RebuttalComposerStep(PipelineStep):
             output_schema={"global_response": "string"},
             model_profile="judge",
         )
-        result = self.executor.execute(spec)
-        for warning in result.warnings:
-            ctx.add_qa_issue(f"rebuttal_executor_warning:{warning}")
-        if not result.ok:
+        result = self._execute_with_retry(ctx, spec, call_tag="global")
+        if result is None or not result.ok:
             return (
                 "We appreciate all reviews and will strengthen evidence quality, add statistical significance "
                 "reporting, and clarify contribution boundaries in the revision."

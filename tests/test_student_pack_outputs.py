@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_paper_reviewers.models import ReviewRunInput
+import pytest
+
+from agent_paper_reviewers.models import ExecutorBackend, ReviewRunInput
 from agent_paper_reviewers.orchestrator import ReviewOrchestrator
 
 
@@ -51,3 +53,16 @@ def test_student_pack_zh_outputs_exist_when_bilingual(tmp_path: Path) -> None:
     assert (run_dir / "student_pack" / "zh" / "001-submission-decision.md").exists()
     assert (run_dir / "student_pack" / "zh" / "002-action-items.md").exists()
     assert (run_dir / "student_pack" / "zh" / "003-rebuttal-draft.md").exists()
+
+
+def test_student_pack_blocks_fallback_when_real_agent_missing(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AGENT_PAPER_REVIEWERS_CODEX_API_KEY", raising=False)
+    data = _build_input(tmp_path, "en")
+    data.options.executor_backend = ExecutorBackend.OPENAI
+    orch = ReviewOrchestrator(Path(__file__).resolve().parents[1])
+    with pytest.raises(RuntimeError) as excinfo:
+        orch.run(data, tmp_path / "runs")
+    text = str(excinfo.value)
+    assert "executor backend validation failed" in text
+    assert "`openai`" in text

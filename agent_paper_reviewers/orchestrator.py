@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .executors.base import ExecutorAdapter
-from .executors.factory import get_executor
+from .executors.factory import get_executor, validate_executor_readiness
 from .mcp.factory import get_mcp_provider
 from .models import ReviewRunInput, RunStatus, RunSummary
 from .pipeline import (
@@ -47,6 +47,15 @@ class ReviewOrchestrator:
     def run(self, input_data: ReviewRunInput, output_root: Path) -> RunSummary:
         run_id = datetime.utcnow().strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:8]
         run_dir = self._build_output_dir(output_root, input_data)
+
+        ready, reason = validate_executor_readiness(input_data.options.executor_backend)
+        if not ready:
+            backend = input_data.options.executor_backend.value
+            raise RuntimeError(
+                "FATAL: executor backend validation failed for "
+                f"`{backend}`. {reason} "
+                "Deterministic fallback is disabled for production-style analysis."
+            )
 
         executor = get_executor(input_data.options.executor_backend)
         mcp_tools = get_mcp_provider(input_data.options.mcp_backend)

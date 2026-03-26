@@ -56,7 +56,24 @@ Version: v1.0（与 `main` 当前实现对齐）
 4. MCP 层：OpenReview 规则解析与动态补充（可禁用、可降级）。
 5. 产物层：统一输出 `MD + JSON + PDF(可选)`。
 
-### 3.2 固定流水线步骤（17 步）
+### 3.2 推荐运行模式（Agent 主导分析）
+
+建议把本项目当“工具库”：
+
+1. 用代码工具做确定性任务：venue 规则解析、论文文本提取、格式化输出。
+2. 用上层 Agent 做语义任务：读论文、识别 gaps、风险排序、rebuttal 生成。
+3. 再调用工具层输出标准化文档。
+
+对应 CLI 工具命令：
+
+1. `tool-venue-profile`
+2. `tool-parse-paper`
+3. `tool-format-template`
+4. `tool-format-student-pack`
+
+说明：完整 pipeline（`run --input ...`）仍保留，适合一键执行与回归测试。
+
+### 3.3 固定流水线步骤（17 步）
 
 1. Intake
 2. VenueProfileResolver

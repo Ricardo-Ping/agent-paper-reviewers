@@ -4,7 +4,10 @@ import json
 from pathlib import Path
 
 from agent_paper_reviewers.models import ReviewRunInput
+from agent_paper_reviewers.models import TaskResult, TaskSpec
 from agent_paper_reviewers.orchestrator import ReviewOrchestrator
+from agent_paper_reviewers.pipeline.base import PipelineContext
+from agent_paper_reviewers.pipeline.step_venue_recommender import VenueRecommenderStep
 from agent_paper_reviewers.services.venue_recommender import recommend_venues
 
 
@@ -90,7 +93,104 @@ def test_pipeline_exports_venue_recommendations(tmp_path: Path) -> None:
     reasons = first.get("reasons", [])
     assert isinstance(reasons, list) and reasons
     # Reasons should contain actionable gap details, not only generic templates.
-    assert any("hits=" in str(r) or "missing keywords" in str(r) for r in reasons)
+    assert any(
+        token in str(r)
+        for r in reasons
+        for token in ("hits=", "missing keywords", "venue-specific gaps", "pre-submit weakness", "gap")
+    )
 
     brief = (run_dir / "decision_brief.en.md").read_text(encoding="utf-8-sig")
     assert "Recommended Venues (If You Are Unsure)" in brief
+
+
+class _FlatVenueScoreExecutor:
+    def execute(self, spec: TaskSpec) -> TaskResult:
+        if spec.task_type != "venue_recommend":
+            return TaskResult(ok=True, output={})
+        return TaskResult(
+            ok=True,
+            output={
+                "recommended_venues": [
+                    {
+                        "venue": "sigmod",
+                        "year": 2026,
+                        "semantic_fit_score": 0.74,
+                        "review_risk_score": 0.33,
+                        "match_score": 0.74,
+                        "reasons": ["Good fit for systems work."],
+                        "fit_summary": "fit",
+                        "specific_gap_summary": "gap",
+                        "required_check_passed_count": 3,
+                        "required_check_total": 5,
+                        "passed_checks": ["baseline_coverage"],
+                        "failed_checks": ["statistical_significance"],
+                    },
+                    {
+                        "venue": "vldb",
+                        "year": 2026,
+                        "semantic_fit_score": 0.74,
+                        "review_risk_score": 0.33,
+                        "match_score": 0.74,
+                        "reasons": ["Good fit for systems work."],
+                        "fit_summary": "fit",
+                        "specific_gap_summary": "gap",
+                        "required_check_passed_count": 3,
+                        "required_check_total": 5,
+                        "passed_checks": ["baseline_coverage"],
+                        "failed_checks": ["statistical_significance", "scalability_evaluation"],
+                    },
+                    {
+                        "venue": "icde",
+                        "year": 2026,
+                        "semantic_fit_score": 0.74,
+                        "review_risk_score": 0.33,
+                        "match_score": 0.74,
+                        "reasons": ["Good fit for systems work."],
+                        "fit_summary": "fit",
+                        "specific_gap_summary": "gap",
+                        "required_check_passed_count": 2,
+                        "required_check_total": 5,
+                        "passed_checks": ["baseline_coverage"],
+                        "failed_checks": ["statistical_significance", "scalability_evaluation", "workload_diversity"],
+                    },
+                ],
+                "method_note": "mock",
+            },
+        )
+
+
+def test_agent_venue_recommendation_enforces_score_dispersion(tmp_path: Path) -> None:
+    paper = tmp_path / "paper.md"
+    paper.write_text("# T\n\n## Abstract\nSystem paper\n", encoding="utf-8")
+    input_data = ReviewRunInput.model_validate(
+        {
+            "paper": {"format": "md", "path": str(paper)},
+            "venue": {"name": "SIGMOD", "year": 2026},
+            "claims": ["We improve SQL translation."],
+        }
+    )
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    ctx = PipelineContext(run_id="r1", run_dir=run_dir, input_data=input_data)
+
+    step = VenueRecommenderStep(executor=_FlatVenueScoreExecutor())
+    payload = {
+        "recommended_venues": [
+            {"venue": "sigmod", "year": 2026, "match_score": 0.73, "reasons": [], "passed_checks": ["baseline_coverage"], "failed_checks": ["statistical_significance"]},
+            {"venue": "vldb", "year": 2026, "match_score": 0.72, "reasons": [], "passed_checks": ["baseline_coverage"], "failed_checks": ["statistical_significance", "scalability_evaluation"]},
+            {"venue": "icde", "year": 2026, "match_score": 0.71, "reasons": [], "passed_checks": ["baseline_coverage"], "failed_checks": ["statistical_significance", "scalability_evaluation", "workload_diversity"]},
+        ],
+        "target_year": 2026,
+        "candidate_venues_considered": 3,
+    }
+    out = step._recommend_with_executor(
+        ctx=ctx,
+        payload=payload,
+        paper_structured={"title": "T", "summary": "S", "sections": [{"name": "abstract", "text": "system db"}]},
+        claims_normalized={"claims": [{"claim_id": "C1", "claim_type": "novelty", "claim_text": "t"}]},
+    )
+    assert isinstance(out, dict)
+    rows = out["recommended_venues"]
+    scores = [float(r.get("match_score", 0.0)) for r in rows]
+    assert all(0.55 <= s <= 0.90 for s in scores)
+    assert len({round(s, 3) for s in scores}) >= 2

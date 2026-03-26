@@ -31,7 +31,7 @@ def test_pdf_fallback_partial_failed(tmp_path: Path, monkeypatch) -> None:
         "claims": ["Claim."],
         "options": {
             "language_mode": "en",
-            "executor_backend": "codex",
+            "executor_backend": "local_vllm",
             "always_export_pdf": True,
         },
     }

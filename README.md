@@ -46,6 +46,32 @@
 - Executor 可插拔：支持 `codex|agent_api|openai|anthropic|qwen|local_vllm`。
 - 未知会议自动降级：本地 `_fallback` 规则 -> OpenReview 动态发现 -> executor 自举规则草案（三层回退）。
 
+## 推荐工作方式（Agent 分析 + Skill 工具库）
+现在推荐把本项目当成“工具层”，而不是强绑定单一内置分析逻辑：
+
+1. 用 Skill 工具提取上下文：`tool-parse-paper` + `tool-venue-profile`。
+2. 让上层 Agent 读论文并做语义分析：主张提炼、gap 识别、风险判断、rebuttal 草拟。
+3. 用 Skill 工具做标准化输出：`tool-format-template` + `tool-format-student-pack`。
+
+这样做的好处是：分析能力由你选择的 Agent 决定（Codex/OpenClaw/其他），而格式与流程资产保持稳定复用。
+
+### Tool-Only 命令（给 Agent 调用）
+```bash
+# 1) 取会议规则（JSON）
+python -m agent_paper_reviewers.cli tool-venue-profile --venue ICLR --year 2026 --json
+
+# 2) 解析论文（JSON）
+python -m agent_paper_reviewers.cli tool-parse-paper --paper-path /abs/path/paper.pdf --output parsed_paper.json
+
+# 3) 导出分析模板（让 Agent 按这个结构回填）
+python -m agent_paper_reviewers.cli tool-format-template --template student_pack_analysis --output analysis_template.json
+
+# 4) 把 Agent 的分析结果格式化为 3 份研究生可读文档
+python -m agent_paper_reviewers.cli tool-format-student-pack --analysis-json agent_analysis.json --output-dir output/student_pack/en --language en
+```
+
+兼容说明：`run --input ...` 的全流程模式仍然保留，适合一键跑通；上面是更推荐的“Agent 主导分析”模式。
+
 ## 给 Agent 的一句话指令
 可以直接对 Agent 说：
 
