@@ -75,6 +75,10 @@ def test_venue_profile_merges_openreview_overrides(tmp_path: Path) -> None:
     assert venue_profile["policy_needs_manual_check"] is False
     assert profile["rebuttal_policy"]["per_review_char_limit"] == 4321
     assert profile["scoring_axes"] == ["novelty", "soundness", "clarity"]
+    assert "section_length_ratio" in profile["required_checks"]
+    assert "section_length_ratio" in profile["required_check_specs"]
+    assert "terminology_consistency" in profile["required_checks"]
+    assert "terminology_consistency" in profile["required_check_specs"]
 
     weights = profile["weights"]
     assert abs(sum(weights.values()) - 1.0) < 0.0001
@@ -119,6 +123,8 @@ def test_venue_profile_silent_fallback_when_mcp_missing(tmp_path: Path) -> None:
     assert venue_profile["policy_needs_manual_check"] is False
     assert ctx.qa_issues == []
     assert venue_profile["profile"]["rebuttal_policy"]["per_review_char_limit"] == 2500
+    assert "section_length_ratio" in venue_profile["profile"]["required_checks"]
+    assert "terminology_consistency" in venue_profile["profile"]["required_checks"]
 
 
 def test_venue_profile_silent_fallback_when_mcp_fails_or_returns_empty_policy(tmp_path: Path) -> None:

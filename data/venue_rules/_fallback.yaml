@@ -14,15 +14,148 @@ profile:
     experiment: 0.3
     clarity: 0.15
   common_reject_reasons:
-  - Core claims are not yet sufficiently supported by empirical or analytical evidence.
-  - Baseline comparisons and ablation analysis are incomplete.
-  - Reproducibility and reporting details are below venue expectations.
+  - Core claims are not explicitly mapped to direct evidence anchors (table/figure/section).
+  - Baseline comparisons under matched settings are not strong enough for reviewer confidence.
+  - Statistical reliability (multi-seed or significance tests) is insufficiently reported.
+  - Reproducibility package is incomplete (configuration, seed policy, and environment details).
+  - Novelty positioning against recent related work is not yet convincing.
   required_checks:
+  - contribution_alignment
   - baseline_coverage
   - statistical_significance
   - ablation_completeness
   - reproducibility_details
+  - error_analysis
+  - robustness_checks
   - limitation_discussion
+  - top_venue_related_work_coverage
+  - practical_impact
+  required_check_specs:
+    contribution_alignment:
+      check_name: contribution_alignment
+      gap_code: missing_contribution_alignment
+      description: Contribution statements and novelty boundaries are not explicit enough.
+      severity_hint: P1
+      keywords:
+      - contribution
+      - we propose
+      - novelty
+      - compared with prior work
+      min_hits: 2
+      min_distinct_sections: 1
+    baseline_coverage:
+      check_name: baseline_coverage
+      gap_code: missing_baseline
+      description: Baseline coverage appears insufficient for robust reviewer comparison.
+      severity_hint: P1
+      keywords:
+      - baseline
+      - comparison
+      - state-of-the-art
+      - prior work
+      min_hits: 2
+      min_distinct_sections: 1
+      min_citation_baseline_like: 1
+    statistical_significance:
+      check_name: statistical_significance
+      gap_code: missing_significance
+      description: Statistical significance and uncertainty reporting are under-specified.
+      severity_hint: P1
+      keywords:
+      - p-value
+      - significance
+      - confidence interval
+      - std
+      - seed
+      min_hits: 2
+      min_distinct_sections: 1
+    ablation_completeness:
+      check_name: ablation_completeness
+      gap_code: missing_ablation
+      description: Ablation analysis is incomplete for key design components.
+      severity_hint: P1
+      keywords:
+      - ablation
+      - without
+      - w/o
+      - component
+      min_hits: 1
+      min_distinct_sections: 1
+    reproducibility_details:
+      check_name: reproducibility_details
+      gap_code: missing_reproducibility
+      description: Reproducibility details are not sufficient for independent reruns.
+      severity_hint: P1
+      keywords:
+      - reproducibility
+      - code
+      - hyperparameter
+      - implementation details
+      - seed
+      min_hits: 2
+      min_distinct_sections: 1
+    error_analysis:
+      check_name: error_analysis
+      gap_code: missing_error_analysis
+      description: Failure-case analysis is too limited to support reviewer trust.
+      severity_hint: P2
+      keywords:
+      - error analysis
+      - failure case
+      - qualitative
+      - where it fails
+      min_hits: 1
+      min_distinct_sections: 1
+    robustness_checks:
+      check_name: robustness_checks
+      gap_code: missing_robustness
+      description: Robustness checks (OOD/noise/stress tests) are missing or weak.
+      severity_hint: P1
+      keywords:
+      - robustness
+      - ood
+      - noise
+      - perturbation
+      - stress test
+      min_hits: 1
+      min_distinct_sections: 1
+    limitation_discussion:
+      check_name: limitation_discussion
+      gap_code: missing_limitations
+      description: Limitations and scope boundaries are not explicitly documented.
+      severity_hint: P2
+      keywords:
+      - limitation
+      - scope
+      - future work
+      - risk
+      min_hits: 1
+      min_distinct_sections: 1
+    top_venue_related_work_coverage:
+      check_name: top_venue_related_work_coverage
+      gap_code: missing_top_venue_related_work_coverage
+      description: Related-work coverage for recent top venues appears insufficient.
+      severity_hint: P1
+      keywords:
+      - related work
+      - references
+      - state-of-the-art
+      min_hits: 1
+      min_citation_top_venue: 3
+      min_citation_top_venue_recent: 1
+    practical_impact:
+      check_name: practical_impact
+      gap_code: missing_practical_impact
+      description: Practical impact/deployment value is not convincingly demonstrated.
+      severity_hint: P2
+      keywords:
+      - practical
+      - deployment
+      - real-world
+      - latency
+      - cost
+      min_hits: 1
+      min_distinct_sections: 1
   rebuttal_policy:
     mode: per_review_only
     per_review_char_limit: 2500
@@ -31,5 +164,13 @@ profile:
     attachment_page_limit: 0
     allow_links: false
     dynamic_from_openreview: false
+  decision_policy:
+    strictness_tier: default_unknown_venue
+    p0_not_ready: true
+    p1_not_ready_threshold: 4
+    p1_borderline_threshold: 2
+    min_overall_ready: 6.3
+    min_overall_borderline: 5.6
+    notes: Conservative default gate for unknown venues to reduce false-ready recommendations.
   openreview_group_id: ''
-  version_date: '2026-03-25'
+  version_date: '2026-03-26'

@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from dataclasses import asdict
 import json
 import shutil
 from pathlib import Path
@@ -10,6 +11,7 @@ from rich.table import Table
 
 from .models import ReviewRunInput
 from .services.feedback_store import submit_feedback
+from .services.pdf_export import detect_pdf_export_capability
 from .services.venue_sync import refresh_venue_rules
 
 app = typer.Typer(help="agent-paper-reviewers pipeline CLI")
@@ -21,7 +23,13 @@ def _repo_root() -> Path:
 
 
 @app.command("doctor")
-def doctor() -> None:
+def doctor(
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Output machine-readable JSON for automation checks.",
+    ),
+) -> None:
     """Check runtime dependencies and external tools."""
     checks = {
         "python": shutil.which("python") is not None,
@@ -32,12 +40,48 @@ def doctor() -> None:
         "conda": shutil.which("conda") is not None,
     }
 
+    pdf = detect_pdf_export_capability()
+    pdf_status = {
+        "ready": pdf.ready,
+        "detail": (
+            f"ready (pandoc + {pdf.preferred_engine})"
+            if pdf.ready
+            else (
+                "missing pandoc"
+                if not pdf.pandoc_available
+                else "no LaTeX engine (need xelatex/lualatex/tectonic)"
+            )
+        ),
+        "toolchain": asdict(pdf),
+    }
+
+    if as_json:
+        console.print_json(
+            data={
+                "checks": checks,
+                "pdf_export": pdf_status,
+            }
+        )
+        return
+
     table = Table(title="agent-paper-reviewers doctor")
     table.add_column("Dependency")
     table.add_column("Available")
+    table.add_column("Details")
     for dep, ok in checks.items():
-        table.add_row(dep, "yes" if ok else "no")
+        table.add_row(dep, "yes" if ok else "no", "-")
+    table.add_row(
+        "pdf export capability (optional)",
+        "yes" if pdf.ready else "no",
+        str(pdf_status["detail"]),
+    )
     console.print(table)
+    if not pdf.ready:
+        console.print(
+            "hint: install PDF toolchain with "
+            "`conda install -c conda-forge pandoc tectonic` "
+            "(or install `xelatex` / `lualatex`)."
+        )
 
 
 @app.command("run")
@@ -131,4 +175,3 @@ def submit_feedback_command(
 
 if __name__ == "__main__":
     app()
-

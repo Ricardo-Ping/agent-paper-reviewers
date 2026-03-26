@@ -4,3 +4,4 @@
 - 2026-03-25: enabled dynamic OpenReview policy fallback marker (`policy_needs_manual_check`) for venues with non-static rebuttal rules.
 - 2026-03-25: refined SIGMOD/VLDB/ICDE required checks with database-system-specific criteria (workload diversity, scalability, efficiency tradeoff, baseline fairness, system reproducibility, and top-venue related-work coverage).
 - 2026-03-25: added venue-aware `decision_policy` thresholds for report decisioning (high-competition vs medium-competition defaults with overridable per-venue settings).
+- 2026-03-26: upgraded `_fallback.yaml` for unknown venues with richer `required_check_specs`, stricter unknown-venue `decision_policy`, and stronger reject-reason templates.

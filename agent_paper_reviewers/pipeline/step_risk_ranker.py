@@ -25,8 +25,10 @@ class RiskRankerStep(PipelineStep):
         venue_profile = ctx.artifacts.get("venue_profile", {}).get("profile", {})
 
         payload = self._rank_with_executor(ctx, alignments, gaps)
+        source = "executor"
         if payload is None:
             payload = self._rank_rule_based(ctx, alignments, gaps, venue_profile)
+            source = "rule_fallback"
 
         payload = self._apply_feedback_loop(ctx, payload, venue_profile)
         payload = self._apply_stage_strategy(ctx, payload, venue_profile)
@@ -35,6 +37,7 @@ class RiskRankerStep(PipelineStep):
             alignments=alignments,
             gaps=gaps,
         )
+        payload["source"] = source
         ctx.artifacts["risk_ranking"] = payload
         ctx.dump_json("artifacts/risk_ranking.json", payload)
 
@@ -61,7 +64,7 @@ class RiskRankerStep(PipelineStep):
 
         try:
             records = load_feedback_records(repo_root, venue_name, venue_year)
-            profile = build_feedback_profile(records)
+            profile = build_feedback_profile(records, target_year=venue_year)
             adjusted, signals = apply_feedback_profile(risks, profile)
         except Exception as exc:  # noqa: BLE001
             ctx.add_qa_issue(f"feedback_loop_apply_failed:{exc}")
@@ -476,6 +479,7 @@ class RiskRankerStep(PipelineStep):
             "weak_claim_alignment": 0.71,
             "claim_evidence_contradiction": 0.83,
             "missing_baseline": 0.66,
+            "missing_baseline_fairness": 0.61,
             "missing_significance": 0.62,
             "missing_ablation": 0.58,
             "missing_reproducibility": 0.52,
@@ -486,6 +490,13 @@ class RiskRankerStep(PipelineStep):
             "missing_ethics_limitations": 0.38,
             "missing_practical_impact": 0.44,
             "missing_qualitative_analysis": 0.43,
+            "terminology_inconsistency": 0.47,
+            "missing_reference_coverage": 0.58,
+            "missing_top_venue_related_work_coverage": 0.54,
+            "missing_workload_diversity": 0.57,
+            "missing_scalability_evaluation": 0.59,
+            "missing_efficiency_tradeoff": 0.56,
+            "missing_system_setting_reproducibility": 0.57,
         }
         for gap in gaps:
             score = gap_score_map.get(gap["code"], 0.45)
@@ -590,15 +601,25 @@ class RiskRankerStep(PipelineStep):
         code = str(gap.get("code", "")).lower()
         mapping = {
             "missing_baseline": "Baseline comparisons are not strong or fair enough for this venue.",
+            "missing_baseline_fairness": "Baseline fairness and matched-budget settings are not sufficiently justified.",
             "missing_significance": "Improvements are not statistically validated to reviewer standards.",
             "missing_ablation": "Ablation evidence is insufficient to justify component claims.",
             "missing_reproducibility": "Reproducibility details are below expected submission quality.",
+            "missing_error_analysis": "Failure-case analysis is too shallow to support reviewer confidence.",
+            "missing_robustness": "Robustness evidence is insufficient for the scope of claimed improvements.",
+            "missing_contribution_alignment": "Novelty positioning versus prior work remains under-specified.",
+            "missing_limitations": "Limitations and scope boundaries are not explicitly discussed.",
+            "missing_ethics_limitations": "Ethics/societal-risk limitations are not sufficiently addressed.",
+            "missing_practical_impact": "Practical impact and deployment relevance are not yet convincing.",
+            "missing_qualitative_analysis": "Qualitative and failure-case evidence is insufficient.",
+            "terminology_inconsistency": "Terminology and acronym usage are inconsistent across sections.",
             "claim_evidence_contradiction": "Some reported results appear to conflict with the stated claim direction.",
             "missing_reference_coverage": "Related work positioning is not sufficiently grounded in prior literature.",
             "missing_top_venue_related_work_coverage": "Recent top-venue positioning is underdeveloped.",
             "missing_workload_diversity": "Evaluation workloads are not representative enough.",
             "missing_scalability_evaluation": "Scalability evidence is incomplete for system-level claims.",
             "missing_efficiency_tradeoff": "Efficiency trade-off reporting is not convincing.",
+            "missing_system_setting_reproducibility": "System setup and runtime configuration are insufficient for reproducibility.",
             "weak_claim_alignment": "Key claims remain weakly grounded in direct evidence.",
         }
         return mapping.get(code, "Experimental evidence does not yet meet venue expectations.")
@@ -608,9 +629,21 @@ class RiskRankerStep(PipelineStep):
         code = str(gap.get("code", "")).lower()
         mapping = {
             "missing_baseline": "Add at least two strong baselines under matched compute/data settings and discuss fairness.",
+            "missing_baseline_fairness": "Explicitly report matched compute/data/hardware settings and baseline tuning protocol.",
             "missing_significance": "Report multi-seed statistics with significance tests on all primary metrics.",
             "missing_ablation": "Add full ablation table covering each key component and interactions.",
             "missing_reproducibility": "Provide full hyperparameters, environment, data processing, and code release plan.",
+            "missing_error_analysis": "Add explicit failure taxonomy with representative cases and root-cause discussion.",
+            "missing_robustness": "Add robustness/OOD/noise sensitivity experiments and discuss degradation patterns.",
+            "missing_contribution_alignment": "Add a contribution-positioning table against nearest prior work and tighten claim scope.",
+            "missing_limitations": "Add an explicit limitations/scope section with concrete failure boundaries.",
+            "missing_ethics_limitations": "Add ethics/safety/societal-risk limitations and mitigation discussion.",
+            "missing_practical_impact": "Add deployment-relevant impact analysis (latency/cost/practical constraints).",
+            "missing_qualitative_analysis": "Add qualitative analysis and error-case walkthroughs tied to claim boundaries.",
+            "terminology_inconsistency": (
+                "Define one canonical glossary (full term + acronym), keep naming consistent across sections, "
+                "and add a notation/terminology table."
+            ),
             "claim_evidence_contradiction": (
                 "Resolve claim-result conflicts explicitly: identify conflicting table/figure anchors, "
                 "correct claim scope/direction, and add reconciled analysis."
@@ -620,6 +653,7 @@ class RiskRankerStep(PipelineStep):
             "missing_workload_diversity": "Add heterogeneous workloads/benchmarks and explain representativeness.",
             "missing_scalability_evaluation": "Add scale-up/scale-out results across data and cluster size axes.",
             "missing_efficiency_tradeoff": "Report throughput-latency-resource trade-off curves, not just single-point metrics.",
+            "missing_system_setting_reproducibility": "Provide complete system environment/version/configuration and rerun scripts.",
             "weak_claim_alignment": "Add claim-specific evidence blocks so each major claim has explicit supporting results.",
         }
         return mapping.get(code, "Address this with a focused experiment or analysis update.")

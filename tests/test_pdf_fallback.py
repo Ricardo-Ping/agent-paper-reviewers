@@ -5,6 +5,7 @@ from pathlib import Path
 from agent_paper_reviewers.models import ReviewRunInput, RunStatus
 from agent_paper_reviewers.orchestrator import ReviewOrchestrator
 import agent_paper_reviewers.pipeline.step_exporter_qa as exporter_step
+from agent_paper_reviewers.services.pdf_export import detect_pdf_export_capability
 
 
 def test_pdf_export_default_is_disabled() -> None:
@@ -49,4 +50,15 @@ def test_pdf_fallback_partial_failed(tmp_path: Path, monkeypatch) -> None:
     run_dir = Path(summary.output_dir)
     assert summary.status == RunStatus.PARTIAL_FAILED
     assert (run_dir / "export_errors.log").exists()
+
+
+def test_detect_pdf_export_capability_with_custom_which() -> None:
+    mapping = {
+        "pandoc": "/usr/bin/pandoc",
+        "lualatex": "/usr/bin/lualatex",
+    }
+    status = detect_pdf_export_capability(which=lambda name: mapping.get(name))
+    assert status.pandoc_available is True
+    assert status.ready is True
+    assert status.preferred_engine == "lualatex"
 

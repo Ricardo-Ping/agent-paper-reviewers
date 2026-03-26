@@ -14,12 +14,31 @@
 - 解析论文草稿（PDF/Markdown），抽取结构化章节。
 - 做主张-证据对齐检查（Claim-Evidence Alignment）。
 - 识别高频拒稿缺口：baseline、统计显著性、消融、误差分析、可复现性。
+- 增加稿件风格结构检查：按 venue 检查 `introduction/method/experiments/discussion` 章节长度比例是否失衡。
+- 增加术语一致性检查：检测 acronym 扩写漂移、术语多版本混用与命名不稳定问题。
 - 生成风险分级（P0/P1/P2）与拒稿话术。
 - 生成补救实验计划（优先级、工作量、预期收益）。
 - 生成 rebuttal 初稿（按 reviewer concern 逐条回应）。
 - 当你不确定投稿会议时，基于论文内容反向推荐 Top venue（匹配分 + 依据 + 主要缺口）。
 - 增加评分杠杆分析（哪个维度最拖后腿、先改哪一维度能最快提高 overall）。
 - 按配置导出单语或双语产物（`en` / `en_zh`）。
+
+## 和常见工具的定位差异
+很多工具都很有价值，但它们解决的问题不同。  
+`agent-paper-reviewers` 的定位不是“替代所有工具”，而是补上“投稿前拒稿演练”这条最缺的链路。
+
+| 类别 | 代表工具 | 他们擅长 | 常见盲区 | `agent-paper-reviewers` 的补位 |
+|---|---|---|---|---|
+| 语言润色 | Paperpal / Writefull / Trinka | 语法、表达、用词 | 只管语言，不判断论证是否会被拒 | 把“写得通顺”升级为“主张是否站得住” |
+| 论文发现 / Q&A | Semantic Scholar / Elicit / Consensus | 找文献、问答检索 | 不做投稿风险分级 | 给出可执行拒稿风险（P0/P1/P2） |
+| 投稿技术检查 | Paperpal Preflight / Typeset | 格式、字数、图表规范 | 偏格式，不评审主张证据 | 检查 claim-evidence 对齐与实验缺口 |
+| 专业人工润稿 | Enago / AJE | 专家润稿与建议 | 价格高、周期长、结构化产物少 | 自动化、可复跑、可追踪的 JSON/MD/PDF 产物 |
+| 学术 RAG | PaperQA / Keep | 跨论文问答与引用 | 偏问答，不输出系统化投稿诊断 | 输出“问题-原因-修复-影响”完整诊断报告 |
+| 研究 Agent 助手 | Coauthor / AutoRF | 研究流程辅助 | 常聚焦生成，不聚焦拒稿演练闭环 | 从风险识别到补救计划到 rebuttal 一条链 |
+| OpenReview 本身 | OpenReview | 真实审稿与讨论流程 | 那是正式审稿，不是投稿前训练 | 在投稿前先做“模拟严审 + 提前补洞” |
+
+一句话总结：  
+这个项目的核心独特性是把“审稿风险识别 -> 证据对齐 -> 补救实验 -> rebuttal 草稿 -> 自检”做成可重复执行的工程化流程。
 
 ## 架构思路
 - Skill 驱动流程：流程顺序由 `agent-paper-reviewers-skill/flow_config.yaml` 定义。
@@ -81,6 +100,8 @@ pip install -e .
 ### 4. 运行环境自检
 ```bash
 python -m agent_paper_reviewers.cli doctor
+# 机器可读输出（用于自动化脚本/CI）
+python -m agent_paper_reviewers.cli doctor --json
 ```
 
 ### 5. （可选）启用 PDF 导出工具链
@@ -174,6 +195,15 @@ output/<paper_title>/
 - `AGENT_PAPER_REVIEWERS_PROFILE_ROOT`（可选，覆盖默认 `./profiles` 历史画像存储目录）
 
 ## 输出文件说明
+### 研究生优先入口（推荐先看）
+- `START_HERE.md`：总入口，告诉你先看哪 3 个文件。
+- `student_pack/en/001-submission-decision.md`：一页决策（是否建议投稿 + Top 阻断问题）。
+- `student_pack/en/002-action-items.md`：可执行行动清单（按优先级、带证据锚点与实验工作量）。
+- `student_pack/en/003-rebuttal-draft.md`：与风险映射的 rebuttal 草稿（逐 reviewer）。
+- 双语模式下会同步生成 `student_pack/zh/*` 与 `START_HERE.zh.md`。
+
+这套 `student_pack` 是给研究生“拿来就改”的人类可读入口；其余 JSON/中间文件主要用于调试、追溯和反馈闭环。
+
 ### 核心报告
 - `decision_brief.en.md/json`: 短版决策报告（投稿建议 + Top 风险 + 必补实验 + 各评分解释）。
 - `full_review.en.md/json`: 长版评审报告（逐条风险、证据对齐、修复建议 + 各评分解释）。
@@ -190,6 +220,13 @@ output/<paper_title>/
 - `diagnosis_report.zh.md/json`
 - `rebuttal.zh.md/json`
 - 当 `options.always_export_pdf=true` 时，额外导出对应 `*.pdf` 文件。
+
+### 双语翻译质量说明
+- 双语产物用于“阅读辅助与内部协作”，不等同于可直接对外提交的最终译稿。
+- 翻译链路按回退顺序执行：术语表替换 -> GoogleTranslator -> MarianMT -> executor `translate_zh` -> 稳定回退（pseudo-translate）。
+- 当你使用 deterministic executor、离线运行、或翻译后端不可用时，系统可能进入 pseudo-translate，中文内容会出现中英混杂或表达不自然。
+- 正式投稿场景请以英文主稿为准，并对中文镜像进行人工校对。
+- 如果你希望更高翻译质量：配置具备真实翻译能力的 executor backend，并保证网络/API 可用。
 
 ### 结构化与调试产物
 - `claim_discovery.json`: 自动发现的主张候选、当前选择主张、确认建议。
@@ -218,9 +255,10 @@ output/<paper_title>/
 ## 常见问题
 - 默认为什么没有 PDF：默认关闭 PDF 导出，仅生成 `md+json`，便于直接复制到 Overleaf 或继续编辑。
 - 如何开启 PDF：在 `input.json` 中设置 `"options": {"always_export_pdf": true}`。
-- PDF 导出失败：先运行 `doctor`，确认 `pandoc` 和 LaTeX 引擎可用。
+- PDF 导出失败：先运行 `doctor`，检查 `pdf export capability (optional)` 这一行；或运行 `doctor --json` 看 `pdf_export.ready`。
 - 出现 `pdf_parse_quality_*` 告警：说明 PDF 解析质量不足，建议确认原 PDF 是否包含文本层，或先做 OCR/转 Markdown 再评审。
 - 中文显示异常：请用 UTF-8 打开 Markdown/JSON 文件。
+- 诊断报告显示 `pseudo-translate`：说明当前走了翻译回退路径，中文仅供参考，建议启用真实翻译后端后重跑。
 - 规则标记 `policy_needs_manual_check=true`：表示动态规则解析失败，已回退本地规则。
 - `citation_graph_warning:semantic_scholar_status_429`：Semantic Scholar 匿名请求限流，建议配置 `SEMANTIC_SCHOLAR_API_KEY`。
 
@@ -265,3 +303,5 @@ python -m agent_paper_reviewers.cli refresh-venue --venue all --year 2026
 - `--venue iclr,icml`：只刷新指定会议。
 - `--openreview-group <group_id>`：单会议时覆盖 OpenReview group。
 - `--dry-run`：只预览，不写文件。
+
+

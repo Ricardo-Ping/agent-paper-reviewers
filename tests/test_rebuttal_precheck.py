@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_paper_reviewers.executors.deterministic import DeterministicExecutor
 from agent_paper_reviewers.models import ReviewRunInput, TaskResult, TaskSpec
 from agent_paper_reviewers.pipeline.base import PipelineContext
 from agent_paper_reviewers.pipeline.step_rebuttal import RebuttalComposerStep
@@ -89,6 +90,14 @@ def test_rebuttal_precheck_repairs_generic_response(tmp_path: Path) -> None:
                 "score": 0.62,
                 "likely_reject_phrase": "Stats unclear.",
                 "fix_hint": "Add significance analysis.",
+                "evidence_refs": [
+                    {
+                        "section": "experiments",
+                        "passage_id": "S004_para2",
+                        "excerpt": "Only one run is reported without significance test.",
+                        "page": 5,
+                    }
+                ],
             }
         ]
     }
@@ -100,6 +109,9 @@ def test_rebuttal_precheck_repairs_generic_response(tmp_path: Path) -> None:
 
     item = ctx.artifacts["rebuttal"]["en"]["bundle"]["items"][0]
     assert "significance tests" in item["response"].lower()
+    assert "[see:" in str(item.get("evidence_anchor_hint", ""))
+    assert isinstance(item.get("evidence_anchor_refs", []), list) and item.get("evidence_anchor_refs", [])
+    assert any("[see:" in str(x).lower() for x in item.get("new_evidence", []))
     precheck = ctx.artifacts["rebuttal_precheck"]["items"][0]
     assert precheck["repair_applied"] is True
     plan = ctx.artifacts.get("rebuttal_plan", {})
@@ -107,6 +119,8 @@ def test_rebuttal_precheck_repairs_generic_response(tmp_path: Path) -> None:
     assert plan["plan_items"][0]["review_id"] == "R1"
     assert isinstance(plan.get("post_generation_audit", []), list)
     assert isinstance(plan.get("summary", {}), dict)
+    assert int(plan["summary"].get("warning_count", 0)) >= 1
+    assert int(plan["summary"].get("pass_count", 0)) == 0
 
 
 def test_rebuttal_precheck_detects_hallucinated_sections_and_anchors(tmp_path: Path) -> None:
@@ -142,6 +156,14 @@ def test_rebuttal_precheck_detects_hallucinated_sections_and_anchors(tmp_path: P
                 "score": 0.73,
                 "likely_reject_phrase": "Concern.",
                 "fix_hint": "Fix.",
+                "evidence_refs": [
+                    {
+                        "section": "method",
+                        "passage_id": "S001_para0",
+                        "excerpt": "Method details only.",
+                        "page": 2,
+                    }
+                ],
             }
         ]
     }
@@ -154,6 +176,7 @@ def test_rebuttal_precheck_detects_hallucinated_sections_and_anchors(tmp_path: P
     item = ctx.artifacts["rebuttal"]["en"]["bundle"]["items"][0]
     assert "Figure 99" not in item["response"]
     assert "Table 88" not in item["paper_change"]
+    assert "[see:" in str(item.get("evidence_anchor_hint", ""))
 
     precheck = ctx.artifacts["rebuttal_precheck"]["items"][0]
     issues = precheck.get("issues", [])
@@ -161,3 +184,27 @@ def test_rebuttal_precheck_detects_hallucinated_sections_and_anchors(tmp_path: P
     assert any("section_without_content:experiments" in x for x in issues)
     assert precheck.get("repair_applied") is True
     assert any("rebuttal_hallucination_warning:R1" in x for x in ctx.qa_issues)
+
+
+def test_deterministic_rebuttal_precheck_strict_for_statistical_fix() -> None:
+    executor = DeterministicExecutor()
+    spec = TaskSpec(
+        task_type="rebuttal_precheck",
+        prompt="",
+        context={
+            "concern": "Statistical significance evidence appears missing.",
+            "response": "We will improve statistical analysis.",
+            "new_evidence": ["Add significance discussion."],
+            "paper_change": "Update experiments section.",
+            "char_limit": 1200,
+        },
+        output_schema={},
+        model_profile="judge",
+    )
+    result = executor.execute(spec)
+    assert result.ok is True
+    assert bool(result.output.get("pass")) is False
+    issues = [str(x) for x in result.output.get("issues", [])]
+    assert any(x.startswith("statistical_missing:") for x in issues)
+    revised = str(result.output.get("revised_response", ""))
+    assert "at least 5 seeds" in revised.lower()

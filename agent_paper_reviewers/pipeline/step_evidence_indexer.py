@@ -19,11 +19,21 @@ class EvidenceIndexerStep(PipelineStep):
             section_id = str(sec.get("section_id") or f"S{sec_idx + 1:03d}").strip()
             section_index = int(sec.get("section_index") or (sec_idx + 1))
             section_text = str(sec.get("text") or "")
+            section_text_norm = re.sub(r"\s+", " ", section_text).strip()
+            search_cursor = 0
             for para_idx, paragraph in enumerate(self._split_paragraphs(section_text)):
                 node_id = f"{section_id}_para{para_idx}"
                 clean = paragraph.strip()
                 if not clean:
                     continue
+                clean_norm = re.sub(r"\s+", " ", clean).strip()
+                start_norm, end_norm = self._estimate_normalized_span(
+                    section_text_norm,
+                    clean_norm,
+                    search_cursor=search_cursor,
+                )
+                if end_norm > start_norm >= 0:
+                    search_cursor = end_norm
                 quality_score, quality_flags, is_noisy = self._quality_profile(
                     clean,
                     section=section_name,
@@ -42,13 +52,25 @@ class EvidenceIndexerStep(PipelineStep):
                         "page": self._estimate_page(structured, clean),
                         "quality_score": quality_score,
                         "quality_flags": quality_flags,
+                        "paragraph_index": para_idx,
+                        "anchor_label": "",
+                        "anchor_type": "",
+                        "locator": {
+                            "source": "section_paragraph",
+                            "paragraph_index": para_idx,
+                            "char_start_norm": start_norm,
+                            "char_end_norm": end_norm,
+                        },
                     }
                 )
 
                 mentions = self._extract_figure_table_mentions(clean)
                 for mt_idx, mention in enumerate(mentions):
+                    mention_text = str(mention.get("text", "")).strip()
+                    if not mention_text:
+                        continue
                     mt_score, mt_flags, mt_noisy = self._quality_profile(
-                        mention,
+                        mention_text,
                         section=section_name,
                         kind="figure_table_mention",
                     )
@@ -61,10 +83,31 @@ class EvidenceIndexerStep(PipelineStep):
                             "section_index": section_index,
                             "section": section_name,
                             "kind": "figure_table_mention",
-                            "text": mention[:5000],
-                            "page": self._estimate_page(structured, mention),
+                            "text": mention_text[:5000],
+                            "page": self._estimate_page(structured, mention_text),
                             "quality_score": mt_score,
                             "quality_flags": mt_flags,
+                            "paragraph_index": para_idx,
+                            "mention_index": mt_idx,
+                            "anchor_label": str(mention.get("anchor_label", "")).strip(),
+                            "anchor_type": str(mention.get("anchor_type", "")).strip(),
+                            "locator": {
+                                "source": "inline_figure_table_mention",
+                                "paragraph_index": para_idx,
+                                "mention_index": mt_idx,
+                                "char_start_in_paragraph": int(mention.get("match_start", -1) or -1),
+                                "char_end_in_paragraph": int(mention.get("match_end", -1) or -1),
+                                "char_start_norm": (
+                                    start_norm + int(mention.get("match_start", -1))
+                                    if start_norm >= 0 and int(mention.get("match_start", -1) or -1) >= 0
+                                    else -1
+                                ),
+                                "char_end_norm": (
+                                    start_norm + int(mention.get("match_end", -1))
+                                    if start_norm >= 0 and int(mention.get("match_end", -1) or -1) >= 0
+                                    else -1
+                                ),
+                            },
                         }
                     )
 
@@ -90,6 +133,15 @@ class EvidenceIndexerStep(PipelineStep):
                     "page": 1,
                     "quality_score": q_score,
                     "quality_flags": q_flags,
+                    "paragraph_index": 0,
+                    "anchor_label": "",
+                    "anchor_type": "",
+                    "locator": {
+                        "source": "fallback_body_text",
+                        "paragraph_index": 0,
+                        "char_start_norm": 0,
+                        "char_end_norm": len(fallback_text),
+                    },
                 }
             )
 
@@ -111,6 +163,11 @@ class EvidenceIndexerStep(PipelineStep):
                 "embedding_dim": node["embedding_dim"],
                 "quality_score": node.get("quality_score", 0.5),
                 "quality_flags": node.get("quality_flags", []),
+                "anchor_label": str(node.get("anchor_label", "") or ""),
+                "anchor_type": str(node.get("anchor_type", "") or ""),
+                "paragraph_index": int(node.get("paragraph_index", -1) or -1),
+                "mention_index": int(node.get("mention_index", -1) or -1),
+                "locator": node.get("locator", {}) if isinstance(node.get("locator", {}), dict) else {},
             }
             for node in nodes
         ]
@@ -121,6 +178,11 @@ class EvidenceIndexerStep(PipelineStep):
                 "section": p.get("section", ""),
                 "page": p.get("page", 1),
                 "kind": p.get("kind", ""),
+                "anchor_label": p.get("anchor_label", ""),
+                "anchor_type": p.get("anchor_type", ""),
+                "paragraph_index": p.get("paragraph_index", -1),
+                "mention_index": p.get("mention_index", -1),
+                "locator": p.get("locator", {}),
             }
             for p in passages
         }
@@ -239,8 +301,8 @@ class EvidenceIndexerStep(PipelineStep):
         return paragraphs
 
     @staticmethod
-    def _extract_figure_table_mentions(text: str) -> list[str]:
-        mentions: list[str] = []
+    def _extract_figure_table_mentions(text: str) -> list[dict]:
+        mentions: list[dict] = []
         patterns = [
             r"(table\s+\d+[\w\-\.]*)",
             r"(tab\.\s*\d+[\w\-\.]*)",
@@ -248,13 +310,30 @@ class EvidenceIndexerStep(PipelineStep):
             r"(fig\.\s*\d+[\w\-\.]*)",
         ]
         lowered = text.lower()
+        seen: set[str] = set()
         for pattern in patterns:
             for match in re.finditer(pattern, lowered, flags=re.IGNORECASE):
                 span_start = max(0, match.start() - 80)
                 span_end = min(len(text), match.end() + 180)
                 snippet = text[span_start:span_end].strip()
-                if snippet and snippet not in mentions:
-                    mentions.append(snippet)
+                if not snippet:
+                    continue
+                key = re.sub(r"\s+", " ", snippet.lower())
+                if key in seen:
+                    continue
+                seen.add(key)
+                anchor_raw = text[match.start() : match.end()].strip()
+                anchor_label = EvidenceIndexerStep._normalize_anchor_label(anchor_raw)
+                anchor_type = "table" if anchor_label.lower().startswith("table") else "figure"
+                mentions.append(
+                    {
+                        "text": snippet,
+                        "anchor_label": anchor_label,
+                        "anchor_type": anchor_type,
+                        "match_start": int(match.start()),
+                        "match_end": int(match.end()),
+                    }
+                )
         return mentions[:3]
 
     def _extract_page_visual_content_nodes(self, structured: dict) -> list[dict]:
@@ -308,6 +387,12 @@ class EvidenceIndexerStep(PipelineStep):
 
             kind = "figure_content" if label.startswith("fig") else "table_content"
             anchor = f"{'fig' if label.startswith('fig') else 'table'}_{number}"
+            anchor_label = (
+                f"Figure {number}"
+                if label.startswith("fig")
+                else f"Table {number}"
+            )
+            anchor_type = "figure" if label.startswith("fig") else "table"
             caption_idx += 1
             q_score, q_flags, _ = self._quality_profile(
                 block_text,
@@ -325,6 +410,15 @@ class EvidenceIndexerStep(PipelineStep):
                     "page": page_no,
                     "quality_score": q_score,
                     "quality_flags": q_flags,
+                    "anchor_label": anchor_label,
+                    "anchor_type": anchor_type,
+                    "locator": {
+                        "source": "page_visual_caption",
+                        "page": page_no,
+                        "line_start": i + 1,
+                        "line_end": min(len(lines), i + 1 + len(context_lines)),
+                        "caption_index": caption_idx,
+                    },
                 }
             )
 
@@ -345,6 +439,15 @@ class EvidenceIndexerStep(PipelineStep):
                         "page": page_no,
                         "quality_score": t_score,
                         "quality_flags": t_flags,
+                        "anchor_label": anchor_label,
+                        "anchor_type": anchor_type,
+                        "locator": {
+                            "source": "page_visual_caption_title",
+                            "page": page_no,
+                            "line_start": i + 1,
+                            "line_end": i + 1,
+                            "caption_index": caption_idx,
+                        },
                     }
                 )
         return nodes
@@ -393,9 +496,43 @@ class EvidenceIndexerStep(PipelineStep):
                     "page": page_no,
                     "quality_score": q_score,
                     "quality_flags": q_flags,
+                    "anchor_label": f"TableData p{page_no}#{t_idx}",
+                    "anchor_type": "table",
+                    "locator": {
+                        "source": "page_visual_table_data",
+                        "page": page_no,
+                        "table_index": t_idx,
+                        "row_start": 1,
+                        "row_end": len(row_strings[:12]),
+                        "value_count": len(numeric_values[:20]),
+                    },
                 }
             )
         return nodes
+
+    @staticmethod
+    def _estimate_normalized_span(section_text_norm: str, paragraph_norm: str, *, search_cursor: int = 0) -> tuple[int, int]:
+        if not section_text_norm or not paragraph_norm:
+            return -1, -1
+        probe = paragraph_norm[: min(len(paragraph_norm), 180)]
+        start = section_text_norm.find(probe, max(0, search_cursor))
+        if start < 0:
+            start = section_text_norm.find(probe)
+        if start < 0:
+            return -1, -1
+        return start, start + len(paragraph_norm)
+
+    @staticmethod
+    def _normalize_anchor_label(raw: str) -> str:
+        text = re.sub(r"\s+", " ", str(raw or "").strip())
+        m = re.match(r"^(fig(?:ure)?|tab(?:le)?)\.?\s*([0-9]+[A-Za-z\-\.]*)$", text, flags=re.IGNORECASE)
+        if not m:
+            return text
+        prefix = m.group(1).lower()
+        number = m.group(2)
+        if prefix.startswith("fig"):
+            return f"Figure {number}"
+        return f"Table {number}"
 
     @staticmethod
     def _coerce_page(value: object) -> int:

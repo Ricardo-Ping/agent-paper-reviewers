@@ -467,6 +467,7 @@ class SemanticScholarClient:
         baseline_like_count: int,
         paper_year: Any,
         content_novelty_signal: dict[str, Any] | None = None,
+        stance_summary: dict[str, Any] | None = None,
         outgoing_count_override: int | None = None,
         incoming_count_override: int | None = None,
     ) -> dict[str, Any]:
@@ -552,6 +553,10 @@ class SemanticScholarClient:
             elif content_novelty_score >= 0.55:
                 novelty_signal_score = max(novelty_signal_score, 0.50)
 
+        stance_payload = stance_summary if isinstance(stance_summary, dict) else {}
+        outgoing_stance_counts = stance_payload.get("outgoing_stance_counts", {})
+        if not isinstance(outgoing_stance_counts, dict):
+            outgoing_stance_counts = {}
         return {
             "outgoing_count": int(outgoing_count),
             "incoming_count": int(incoming_count),
@@ -564,6 +569,26 @@ class SemanticScholarClient:
             "recent_top_venue_reference_count": recent_top_venue_ref_count,
             "venue_reference_counts": venue_stats["venue_reference_counts"],
             "venue_year_reference_counts": venue_stats["venue_year_reference_counts"],
+            "outgoing_stance_counts": {
+                "supporting": int(outgoing_stance_counts.get("supporting", 0) or 0),
+                "challenging": int(outgoing_stance_counts.get("challenging", 0) or 0),
+                "neutral": int(outgoing_stance_counts.get("neutral", outgoing_count) or outgoing_count),
+            },
+            "outgoing_support_ratio": float(
+                stance_payload.get(
+                    "outgoing_support_ratio",
+                    int(outgoing_stance_counts.get("supporting", 0) or 0) / max(1, outgoing_count),
+                )
+            ),
+            "outgoing_challenge_ratio": float(
+                stance_payload.get(
+                    "outgoing_challenge_ratio",
+                    int(outgoing_stance_counts.get("challenging", 0) or 0) / max(1, outgoing_count),
+                )
+            ),
+            "outgoing_stance_context_coverage_ratio": float(
+                stance_payload.get("outgoing_stance_context_coverage_ratio", 0.0)
+            ),
             "novelty_components": {
                 "incoming_norm": round(incoming_norm, 3),
                 "recent_reference_norm": round(recent_ref_norm, 3),
@@ -590,13 +615,21 @@ def extract_local_references(raw_text: str) -> list[dict[str, Any]]:
     if not lines:
         return []
 
-    refs: list[str] = []
+    refs: list[tuple[int | None, str]] = []
     cur = ""
+    cur_idx: int | None = None
     for line in lines[1:]:
-        if re.match(r"^(\[\d+\]|\d+\.)\s+", line):
+        marker = re.match(r"^\[(\d+)\]\s+", line)
+        dotted = re.match(r"^(\d+)\.\s+", line)
+        if marker or dotted:
             if cur:
-                refs.append(cur.strip())
-            cur = re.sub(r"^(\[\d+\]|\d+\.)\s+", "", line).strip()
+                refs.append((cur_idx, cur.strip()))
+            if marker:
+                cur_idx = int(marker.group(1))
+                cur = re.sub(r"^\[\d+\]\s+", "", line).strip()
+            else:
+                cur_idx = int(dotted.group(1)) if dotted else None
+                cur = re.sub(r"^\d+\.\s+", "", line).strip()
         else:
             if len(line) < 5:
                 continue
@@ -605,17 +638,219 @@ def extract_local_references(raw_text: str) -> list[dict[str, Any]]:
             else:
                 cur = line
     if cur:
-        refs.append(cur.strip())
+        refs.append((cur_idx, cur.strip()))
 
     rows = []
-    for ref in refs:
+    for ref_idx, ref in refs:
         if len(ref) < 20:
             continue
         year_match = re.search(r"(19|20)\d{2}", ref)
         year = int(year_match.group(0)) if year_match else None
         venue = _infer_venue_from_text(ref)
-        rows.append({"paper_id": "", "title": ref[:320], "year": year, "venue": venue})
+        rows.append(
+            {
+                "paper_id": "",
+                "title": ref[:320],
+                "year": year,
+                "venue": venue,
+                "local_ref_index": ref_idx,
+            }
+        )
     return rows
+
+
+def _body_text_without_references(raw_text: str) -> str:
+    if not raw_text:
+        return ""
+    text = raw_text.replace("\r\n", "\n")
+    lower = text.lower()
+    idx = max(lower.rfind("\nreferences"), lower.rfind("\nbibliography"))
+    if idx < 0:
+        return text
+    return text[:idx]
+
+
+def _split_sentences(text: str) -> list[str]:
+    if not text:
+        return []
+    normalized = re.sub(r"\s+", " ", text)
+    chunks = re.split(r"(?<=[\.\!\?])\s+", normalized)
+    out = [x.strip() for x in chunks if len(x.strip()) >= 18]
+    return out
+
+
+def _parse_citation_marker_numbers(marker: str) -> list[int]:
+    rows: list[int] = []
+    payload = str(marker or "").strip()
+    if not payload:
+        return rows
+    for token in re.split(r"[,\s;]+", payload):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            m = re.match(r"^(\d+)-(\d+)$", token)
+            if not m:
+                continue
+            start = int(m.group(1))
+            end = int(m.group(2))
+            if end < start:
+                start, end = end, start
+            rows.extend(range(start, min(end, start + 30) + 1))
+            continue
+        if token.isdigit():
+            rows.append(int(token))
+    return rows
+
+
+def _extract_numeric_citation_contexts(body_text: str) -> dict[int, list[str]]:
+    out: dict[int, list[str]] = {}
+    for sentence in _split_sentences(body_text):
+        markers = re.findall(r"\[([0-9,\-\s;]+)\]", sentence)
+        if not markers:
+            continue
+        for marker in markers:
+            for ref_idx in _parse_citation_marker_numbers(marker):
+                out.setdefault(ref_idx, []).append(sentence[:260])
+    return out
+
+
+def _citation_stance_keywords() -> tuple[list[str], list[str], list[str]]:
+    supporting = [
+        "following",
+        "build on",
+        "based on",
+        "inspired by",
+        "consistent with",
+        "aligned with",
+        "adopt",
+        "we use",
+        "as shown by",
+        "supports",
+        "validated by",
+        "extends",
+    ]
+    challenging = [
+        "however",
+        "but",
+        "unlike",
+        "limitations of",
+        "fails to",
+        "cannot",
+        "does not",
+        "worse than",
+        "inferior",
+        "outperform",
+        "surpass",
+        "we improve over",
+        "challenge",
+        "contradict",
+        "inconsistent",
+        "shortcoming",
+    ]
+    neutral_cues = [
+        "related work",
+        "for example",
+        "e.g.",
+        "prior work",
+        "previous work",
+        "survey",
+        "overview",
+    ]
+    return supporting, challenging, neutral_cues
+
+
+def _classify_stance_from_contexts(contexts: list[str]) -> dict[str, Any]:
+    supporting, challenging, neutral_cues = _citation_stance_keywords()
+    pos_hits = 0
+    neg_hits = 0
+    neu_hits = 0
+    evidence: list[str] = []
+    for ctx in contexts[:6]:
+        t = str(ctx or "").lower()
+        if not t:
+            continue
+        pos = sum(1 for kw in supporting if kw in t)
+        neg = sum(1 for kw in challenging if kw in t)
+        neu = sum(1 for kw in neutral_cues if kw in t)
+        pos_hits += pos
+        neg_hits += neg
+        neu_hits += neu
+        if pos > 0 or neg > 0:
+            evidence.append(str(ctx).strip()[:220])
+
+    total = pos_hits + neg_hits
+    if total == 0:
+        stance = "neutral"
+        score = 0.0
+        confidence = 0.35 if neu_hits > 0 else 0.22
+    else:
+        score = (pos_hits - neg_hits) / max(1, total)
+        if score >= 0.2:
+            stance = "supporting"
+        elif score <= -0.2:
+            stance = "challenging"
+        else:
+            stance = "neutral"
+        confidence = min(0.95, 0.45 + 0.12 * total + 0.08 * len(evidence))
+
+    return {
+        "stance": stance,
+        "stance_score": round(float(score), 3),
+        "stance_confidence": round(float(confidence), 3),
+        "stance_evidence_snippets": evidence[:2],
+    }
+
+
+def _annotate_outgoing_citation_stance(
+    outgoing_references: list[dict[str, Any]],
+    *,
+    raw_text: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    annotated: list[dict[str, Any]] = []
+    body = _body_text_without_references(raw_text)
+    contexts_by_idx = _extract_numeric_citation_contexts(body)
+    counts: Counter[str] = Counter()
+    with_context = 0
+
+    for ref in outgoing_references:
+        if not isinstance(ref, dict):
+            continue
+        row = dict(ref)
+        local_idx = row.get("local_ref_index")
+        contexts: list[str] = []
+        try:
+            idx_int = int(local_idx) if local_idx is not None else None
+        except (TypeError, ValueError):
+            idx_int = None
+        if idx_int is not None:
+            contexts = contexts_by_idx.get(idx_int, [])
+
+        stance = _classify_stance_from_contexts(contexts)
+        row["citation_stance"] = stance["stance"]
+        row["citation_stance_score"] = stance["stance_score"]
+        row["citation_stance_confidence"] = stance["stance_confidence"]
+        row["citation_stance_evidence"] = stance["stance_evidence_snippets"]
+        if contexts:
+            with_context += 1
+        counts[str(stance["stance"])] += 1
+        annotated.append(row)
+
+    total = len(annotated)
+    support_count = int(counts.get("supporting", 0))
+    challenge_count = int(counts.get("challenging", 0))
+    neutral_count = int(counts.get("neutral", 0))
+    stance_summary = {
+        "outgoing_stance_counts": {
+            "supporting": support_count,
+            "challenging": challenge_count,
+            "neutral": neutral_count,
+        },
+        "outgoing_support_ratio": round(support_count / max(1, total), 3),
+        "outgoing_challenge_ratio": round(challenge_count / max(1, total), 3),
+        "outgoing_stance_context_coverage_ratio": round(with_context / max(1, total), 3),
+    }
+    return annotated, stance_summary
 
 
 def build_citation_graph(structured_paper: dict[str, Any]) -> dict[str, Any]:
@@ -628,24 +863,41 @@ def build_citation_graph(structured_paper: dict[str, Any]) -> dict[str, Any]:
     local_refs = extract_local_references(raw_text)
 
     if remote_graph is None:
-        baseline_like = sum(1 for x in local_refs if client._is_baseline_candidate(x.get("title", "")))
+        local_annotated, stance_summary = _annotate_outgoing_citation_stance(
+            local_refs,
+            raw_text=raw_text,
+        )
+        baseline_like = sum(1 for x in local_annotated if client._is_baseline_candidate(x.get("title", "")))
         stats = client._build_stats(
-            outgoing_references=local_refs,
+            outgoing_references=local_annotated,
             incoming_citations=[],
             baseline_like_count=baseline_like,
             paper_year=None,
             content_novelty_signal=content_novelty,
+            stance_summary=stance_summary,
         )
         return {
             "paper": {"paper_id": "", "title": title, "year": None, "url": "", "venue": ""},
-            "outgoing_references": local_refs,
+            "outgoing_references": local_annotated,
             "incoming_citations": [],
             "stats": stats,
-            "source": "local_only" if local_refs else "none",
+            "source": "local_only" if local_annotated else "none",
             "warnings": warnings,
         }
 
     merged_outgoing = list(remote_graph.get("outgoing_references", []))
+    local_title_to_index = {
+        str(x.get("title", "")).lower().strip(): x.get("local_ref_index")
+        for x in local_refs
+        if isinstance(x, dict) and str(x.get("title", "")).strip()
+    }
+    for row in merged_outgoing:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("title", "")).lower().strip()
+        if key and key in local_title_to_index and row.get("local_ref_index") is None:
+            row["local_ref_index"] = local_title_to_index[key]
+
     if local_refs:
         existing_titles = {str(x.get("title", "")).lower().strip() for x in merged_outgoing}
         for row in local_refs:
@@ -658,6 +910,10 @@ def build_citation_graph(structured_paper: dict[str, Any]) -> dict[str, Any]:
                 merged_outgoing.append(row)
                 existing_titles.add(t)
 
+    merged_outgoing, stance_summary = _annotate_outgoing_citation_stance(
+        merged_outgoing,
+        raw_text=raw_text,
+    )
     baseline_like = sum(1 for x in merged_outgoing if x.get("is_baseline_candidate"))
     stats = client._build_stats(
         outgoing_references=merged_outgoing,
@@ -665,6 +921,7 @@ def build_citation_graph(structured_paper: dict[str, Any]) -> dict[str, Any]:
         baseline_like_count=baseline_like,
         paper_year=remote_graph.get("paper", {}).get("year"),
         content_novelty_signal=content_novelty,
+        stance_summary=stance_summary,
         incoming_count_override=int(remote_graph.get("stats", {}).get("incoming_count", 0)),
     )
 

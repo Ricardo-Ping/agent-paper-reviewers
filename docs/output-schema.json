@@ -1,53 +1,684 @@
-﻿{
+{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "ReviewRunInput",
+  "$id": "https://agent-paper-reviewers.local/schema/io-contract.v2.json",
+  "title": "agent-paper-reviewers I/O Contract",
+  "description": "Input contract + run lifecycle + exported JSON deliverables aligned with current implementation.",
   "type": "object",
-  "required": ["paper", "venue", "claims", "options"],
+  "required": ["input", "run_result", "deliverables"],
   "properties": {
-    "paper": {
+    "input": { "$ref": "#/$defs/ReviewRunInput" },
+    "run_summary": { "$ref": "#/$defs/RunSummary" },
+    "run_result": { "$ref": "#/$defs/RunResult" },
+    "deliverables": { "$ref": "#/$defs/Deliverables" }
+  },
+  "x_contract_notes": {
+    "purpose": "Machine-readable output contract for API/CLI integration and downstream parsers.",
+    "language_behavior": {
+      "en": "Only *.en.* report artifacts are required.",
+      "en_zh": "All *.en.* artifacts are required; *.zh.* report artifacts are optional but expected."
+    },
+    "output_naming": {
+      "root_dir_pattern": "output/<paper_title>/",
+      "student_first_pack": [
+        "START_HERE.{md|en.md|zh.md}",
+        "student_pack/{en|zh}/001-submission-decision.md",
+        "student_pack/{en|zh}/002-action-items.md",
+        "student_pack/{en|zh}/003-rebuttal-draft.md"
+      ],
+      "primary_reports": [
+        "decision_brief.{en|zh}.{md|json|pdf}",
+        "full_review.{en|zh}.{md|json|pdf}",
+        "diagnosis_report.{en|zh}.{md|json|pdf}",
+        "rebuttal.{en|zh}.{md|json|pdf}"
+      ],
+      "json_supporting_artifacts": [
+        "claim_discovery.json",
+        "claim_evidence_matrix.json",
+        "reviewer_questions.json",
+        "remediation_plan.json",
+        "rebuttal_plan.json",
+        "rebuttal_precheck.json",
+        "paper_qa_gate.json",
+        "venue_recommendations.json",
+        "venue_profile_used.json",
+        "skill_flow_used.json",
+        "mcp_runtime.json",
+        "feedback_template.json",
+        "run_summary.json",
+        "run_result.json",
+        "pipeline_steps.json"
+      ]
+    },
+    "critical_runtime_files": {
+      "run_result.json": "Final run status, failed_step, produced_artifacts, and qa_issues.",
+      "pipeline_steps.json": "Per-step execution trace (pending/running/success/failed/skipped).",
+      "gaps.json": "Required-check outcomes and gap diagnostics.",
+      "risk_ranking.json": "Prioritized reject risks and score explanations."
+    },
+    "integration_advice": [
+      "Always parse run_result.status first; then branch into success/partial_failed handling.",
+      "Treat qa_issues as warnings unless status=failed and failed_step is not null.",
+      "Use passage_id + section + locator from EvidenceRef as the canonical evidence anchor."
+    ]
+  },
+  "$defs": {
+    "LanguageMode": { "type": "string", "enum": ["en", "en_zh"] },
+    "ExecutorBackend": {
+      "type": "string",
+      "enum": ["codex", "agent_api", "openai", "anthropic", "qwen", "local_vllm"]
+    },
+    "MCPBackend": { "type": "string", "enum": ["http", "disabled"] },
+    "RunStatus": { "type": "string", "enum": ["success", "partial_failed", "failed"] },
+    "StepState": { "type": "string", "enum": ["pending", "running", "success", "failed", "skipped"] },
+    "ManuscriptStage": {
+      "type": "string",
+      "enum": ["initial_submission", "rejected_after_reviews", "meta_review_discussion"]
+    },
+    "PaperInput": {
       "type": "object",
       "required": ["format", "path"],
       "properties": {
-        "format": {"enum": ["pdf", "md"]},
-        "path": {"type": "string"}
-      }
+        "format": { "type": "string", "enum": ["pdf", "md"] },
+        "path": {
+          "type": "string",
+          "description": "Absolute path preferred. Relative path is resolved against input JSON location by CLI."
+        }
+      },
+      "additionalProperties": false
     },
-    "venue": {
+    "VenueInput": {
       "type": "object",
       "required": ["name", "year"],
       "properties": {
-        "name": {"type": "string"},
-        "year": {"type": "integer"}
-      }
+        "name": { "type": "string" },
+        "year": { "type": "integer" }
+      },
+      "additionalProperties": false
     },
-    "claims": {
-      "type": "array",
-      "items": {"type": "string"},
-      "minItems": 1
-    },
-    "constraints": {
+    "Constraints": {
       "type": "object",
       "properties": {
-        "time_days": {"type": "integer"},
-        "gpu_budget_hours": {"type": "integer"},
-        "max_new_experiments": {"type": "integer"},
-        "cannot_run": {
-          "type": "array",
-          "items": {"type": "string"}
+        "time_days": { "type": "integer", "default": 10 },
+        "gpu_budget_hours": { "type": "integer", "default": 200 },
+        "max_new_experiments": { "type": "integer", "default": 6 },
+        "cannot_run": { "type": "array", "items": { "type": "string" }, "default": [] }
+      },
+      "additionalProperties": false
+    },
+    "RunOptions": {
+      "type": "object",
+      "properties": {
+        "language_mode": { "$ref": "#/$defs/LanguageMode" },
+        "executor_backend": { "$ref": "#/$defs/ExecutorBackend" },
+        "mcp_backend": { "$ref": "#/$defs/MCPBackend" },
+        "always_export_pdf": { "type": "boolean", "default": false }
+      },
+      "additionalProperties": false
+    },
+    "ProfileInput": {
+      "type": "object",
+      "properties": {
+        "author_hash": { "type": "string" },
+        "author_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ReviewerComment": {
+      "type": "object",
+      "required": ["concern"],
+      "properties": {
+        "review_id": { "type": "string" },
+        "concern": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ReviewContextInput": {
+      "type": "object",
+      "properties": {
+        "manuscript_stage": { "$ref": "#/$defs/ManuscriptStage" },
+        "reviewer_comments": { "type": "array", "items": { "$ref": "#/$defs/ReviewerComment" }, "default": [] },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ReviewRunInput": {
+      "type": "object",
+      "required": ["paper", "venue"],
+      "properties": {
+        "paper": { "$ref": "#/$defs/PaperInput" },
+        "venue": { "$ref": "#/$defs/VenueInput" },
+        "claims": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "constraints": { "$ref": "#/$defs/Constraints" },
+        "options": { "$ref": "#/$defs/RunOptions" },
+        "profile": { "$ref": "#/$defs/ProfileInput" },
+        "review_context": { "$ref": "#/$defs/ReviewContextInput" }
+      },
+      "additionalProperties": false
+    },
+    "StepStatus": {
+      "type": "object",
+      "required": ["name", "status"],
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "$ref": "#/$defs/StepState" },
+        "started_at": { "type": ["string", "null"] },
+        "ended_at": { "type": ["string", "null"] },
+        "error": { "type": ["string", "null"] },
+        "skip_reason": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "RunSummary": {
+      "type": "object",
+      "required": ["run_id", "status", "qa_issues", "step_statuses"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "status": { "$ref": "#/$defs/RunStatus" },
+        "qa_issues": { "type": "array", "items": { "type": "string" } },
+        "step_statuses": { "type": "array", "items": { "$ref": "#/$defs/StepStatus" } }
+      },
+      "additionalProperties": true
+    },
+    "RunResult": {
+      "allOf": [
+        { "$ref": "#/$defs/RunSummary" },
+        {
+          "type": "object",
+          "required": ["output_dir", "produced_artifacts", "historical_profile", "failed_step"],
+          "properties": {
+            "output_dir": { "type": "string" },
+            "produced_artifacts": { "type": "array", "items": { "type": "string" } },
+            "historical_profile": { "type": "object" },
+            "failed_step": { "type": ["string", "null"] }
+          },
+          "additionalProperties": true
         }
-      }
+      ]
     },
-    "options": {
+    "ScoreBundle": {
       "type": "object",
-      "required": ["language_mode", "executor_backend", "always_export_pdf"],
+      "required": ["novelty", "soundness", "experiment", "clarity", "overall"],
       "properties": {
-        "language_mode": {"enum": ["en", "en_zh"]},
-        "executor_backend": {
-          "enum": ["codex", "agent_api", "openai", "anthropic", "qwen", "local_vllm"]
-        },
-        "mcp_backend": {"enum": ["http", "disabled"]},
-        "always_export_pdf": {"type": "boolean"}
-      }
+        "novelty": { "type": "number" },
+        "soundness": { "type": "number" },
+        "experiment": { "type": "number" },
+        "clarity": { "type": "number" },
+        "overall": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "ScoreExplanationItem": {
+      "type": "object",
+      "required": ["score", "reasoning", "signals"],
+      "properties": {
+        "score": { "type": "number" },
+        "reasoning": { "type": "string" },
+        "signals": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "ScoreExplanations": {
+      "type": "object",
+      "required": ["novelty", "soundness", "experiment", "clarity"],
+      "properties": {
+        "novelty": { "$ref": "#/$defs/ScoreExplanationItem" },
+        "soundness": { "$ref": "#/$defs/ScoreExplanationItem" },
+        "experiment": { "$ref": "#/$defs/ScoreExplanationItem" },
+        "clarity": { "$ref": "#/$defs/ScoreExplanationItem" }
+      },
+      "additionalProperties": false
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "required": ["section", "passage_id", "excerpt"],
+      "properties": {
+        "section": { "type": "string" },
+        "passage_id": { "type": "string" },
+        "excerpt": { "type": "string" },
+        "section_id": { "type": "string" },
+        "section_index": { "type": "integer" },
+        "page": { "type": "integer" },
+        "kind": { "type": "string" },
+        "anchor_label": { "type": "string" },
+        "anchor_type": { "type": "string" },
+        "locator": { "type": "object" },
+        "confidence_level": { "type": "string", "enum": ["Strong", "Medium", "Weak"] },
+        "confidence_score": { "type": "number" },
+        "conflict_alert": { "type": "boolean" },
+        "conflict_reason": { "type": "string" },
+        "relation": { "type": "string", "enum": ["support", "contradiction"] }
+      },
+      "additionalProperties": true
+    },
+    "RiskItem": {
+      "type": "object",
+      "required": ["id", "severity", "score", "reason", "likely_reject_phrase", "fix_hint"],
+      "properties": {
+        "id": { "type": "string" },
+        "severity": { "type": "string", "enum": ["P0", "P1", "P2"] },
+        "score": { "type": "number" },
+        "reason": { "type": "string" },
+        "likely_reject_phrase": { "type": "string" },
+        "fix_hint": { "type": "string" },
+        "evidence_refs": { "type": "array", "items": { "$ref": "#/$defs/EvidenceRef" } }
+      },
+      "additionalProperties": true
+    },
+    "ClaimAlignment": {
+      "type": "object",
+      "required": ["claim_id", "claim_text", "strength", "score", "evidence_refs"],
+      "properties": {
+        "claim_id": { "type": "string" },
+        "claim_text": { "type": "string" },
+        "claim_type": { "type": "string" },
+        "strength": { "type": "string", "enum": ["Strong", "Medium", "Weak", "None"] },
+        "score": { "type": "number" },
+        "evidence_refs": { "type": "array", "items": { "$ref": "#/$defs/EvidenceRef" } },
+        "contradiction_detected": { "type": "boolean" },
+        "contradiction_score": { "type": "number" },
+        "contradictory_evidence_refs": { "type": "array", "items": { "$ref": "#/$defs/EvidenceRef" } },
+        "evidence_confidence": { "type": "object" },
+        "conflict_alert": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "ClaimEvidenceMatrixJson": {
+      "type": "object",
+      "required": ["alignments", "weighting_policy"],
+      "properties": {
+        "alignments": { "type": "array", "items": { "$ref": "#/$defs/ClaimAlignment" } },
+        "weighting_policy": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "ClaimDiscoveryJson": {
+      "type": "object",
+      "required": [
+        "user_claims",
+        "rule_candidates",
+        "llm_candidates",
+        "suggested_candidates",
+        "selected_claims",
+        "input_guidance",
+        "confirmation"
+      ],
+      "properties": {
+        "user_claims": { "type": "array", "items": { "type": "string" } },
+        "rule_candidates": { "type": "array", "items": { "type": "string" } },
+        "llm_candidates": { "type": "array", "items": { "type": "string" } },
+        "suggested_candidates": { "type": "array", "items": { "type": "string" } },
+        "selected_claims": { "type": "array", "items": { "type": "string" } },
+        "input_guidance": { "type": "object" },
+        "confirmation": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "ReviewerQuestionItem": {
+      "type": "object",
+      "required": [
+        "id",
+        "priority",
+        "question_type",
+        "reviewer_persona",
+        "question",
+        "why_this_will_be_asked",
+        "trigger_gap_codes",
+        "linked_risk_ids",
+        "evidence_to_prepare",
+        "suggested_response_strategy"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "priority": { "type": "string", "enum": ["high", "medium", "low"] },
+        "question_type": { "type": "string" },
+        "reviewer_persona": { "type": "string" },
+        "question": { "type": "string" },
+        "why_this_will_be_asked": { "type": "string" },
+        "trigger_gap_codes": { "type": "array", "items": { "type": "string" } },
+        "linked_risk_ids": { "type": "array", "items": { "type": "string" } },
+        "evidence_to_prepare": { "type": "array", "items": { "type": "string" } },
+        "evidence_anchor_refs": { "type": "array", "items": { "$ref": "#/$defs/EvidenceRef" } },
+        "evidence_anchor_hint": { "type": "string" },
+        "suggested_response_strategy": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "ReviewerQuestionsJson": {
+      "type": "object",
+      "required": ["venue", "year", "manuscript_stage", "source", "questions"],
+      "properties": {
+        "venue": { "type": "string" },
+        "year": { "type": "integer" },
+        "manuscript_stage": { "$ref": "#/$defs/ManuscriptStage" },
+        "source": { "type": "string" },
+        "questions": { "type": "array", "items": { "$ref": "#/$defs/ReviewerQuestionItem" } }
+      },
+      "additionalProperties": true
+    },
+    "ExperimentTask": {
+      "type": "object",
+      "required": [
+        "id",
+        "risk_id",
+        "title",
+        "priority",
+        "effort",
+        "est_time_days",
+        "est_gpu_hours",
+        "expected_gain",
+        "protocol"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "risk_id": { "type": "string" },
+        "title": { "type": "string" },
+        "priority": { "type": "string", "enum": ["high", "medium", "low"] },
+        "effort": { "type": "string", "enum": ["S", "M", "L"] },
+        "est_time_days": { "type": "number" },
+        "est_gpu_hours": { "type": "integer" },
+        "expected_gain": { "type": "string" },
+        "protocol": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "RemediationPlanJson": {
+      "type": "object",
+      "required": [
+        "tasks",
+        "source",
+        "total_est_gpu_hours",
+        "total_est_time_days",
+        "max_new_experiments",
+        "gpu_budget_hours",
+        "time_days"
+      ],
+      "properties": {
+        "tasks": { "type": "array", "items": { "$ref": "#/$defs/ExperimentTask" } },
+        "source": { "type": "string" },
+        "total_est_gpu_hours": { "type": "integer" },
+        "total_est_time_days": { "type": "number" },
+        "max_new_experiments": { "type": "integer" },
+        "gpu_budget_hours": { "type": "integer" },
+        "time_days": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
+    "RebuttalItem": {
+      "type": "object",
+      "required": ["review_id", "concern", "response", "new_evidence", "paper_change", "char_count", "char_limit"],
+      "properties": {
+        "review_id": { "type": "string" },
+        "concern": { "type": "string" },
+        "response": { "type": "string" },
+        "new_evidence": { "type": "array", "items": { "type": "string" } },
+        "paper_change": { "type": "string" },
+        "evidence_anchor_refs": { "type": "array", "items": { "$ref": "#/$defs/EvidenceRef" } },
+        "evidence_anchor_hint": { "type": "string" },
+        "char_count": { "type": "integer" },
+        "char_limit": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+    "RebuttalBundle": {
+      "type": "object",
+      "required": ["venue", "year", "manuscript_stage", "mode", "items", "global_response", "attachment_pdf"],
+      "properties": {
+        "venue": { "type": "string" },
+        "year": { "type": "integer" },
+        "manuscript_stage": { "$ref": "#/$defs/ManuscriptStage" },
+        "mode": { "type": "string" },
+        "items": { "type": "array", "items": { "$ref": "#/$defs/RebuttalItem" } },
+        "global_response": { "type": ["string", "null"] },
+        "attachment_pdf": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "SubmissionReadiness": {
+      "type": "object",
+      "required": [
+        "overall_status",
+        "pass_count",
+        "warning_count",
+        "critical_count",
+        "recommended_next_action",
+        "human_review_recommended",
+        "human_review_reasons",
+        "checks"
+      ],
+      "properties": {
+        "overall_status": { "type": "string", "enum": ["ready", "warning", "critical"] },
+        "pass_count": { "type": "integer" },
+        "warning_count": { "type": "integer" },
+        "critical_count": { "type": "integer" },
+        "recommended_next_action": { "type": "string" },
+        "human_review_recommended": { "type": "boolean" },
+        "human_review_reasons": { "type": "array", "items": { "type": "string" } },
+        "checks": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": true
+    },
+    "DecisionBriefJson": {
+      "type": "object",
+      "required": [
+        "decision",
+        "manuscript_stage",
+        "scores",
+        "score_explanations",
+        "top_risks",
+        "top_remediation_tasks",
+        "submission_readiness"
+      ],
+      "properties": {
+        "decision": { "type": "string" },
+        "manuscript_stage": { "$ref": "#/$defs/ManuscriptStage" },
+        "scores": { "$ref": "#/$defs/ScoreBundle" },
+        "score_explanations": { "$ref": "#/$defs/ScoreExplanations" },
+        "top_risks": { "type": "array", "items": { "$ref": "#/$defs/RiskItem" } },
+        "top_remediation_tasks": { "type": "array", "items": { "$ref": "#/$defs/ExperimentTask" } },
+        "submission_readiness": { "$ref": "#/$defs/SubmissionReadiness" }
+      },
+      "additionalProperties": true
+    },
+    "RebuttalPlanJson": {
+      "type": "object",
+      "required": ["manuscript_stage", "plan_items", "post_generation_audit", "summary"],
+      "properties": {
+        "manuscript_stage": { "$ref": "#/$defs/ManuscriptStage" },
+        "plan_items": { "type": "array", "items": { "type": "object" } },
+        "post_generation_audit": { "type": "array", "items": { "type": "object" } },
+        "summary": {
+          "type": "object",
+          "required": ["total_items", "pass_count", "warning_count", "fail_count", "manual_review_recommended"],
+          "properties": {
+            "total_items": { "type": "integer" },
+            "pass_count": { "type": "integer" },
+            "warning_count": { "type": "integer" },
+            "fail_count": { "type": "integer" },
+            "manual_review_recommended": { "type": "boolean" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "RebuttalPrecheckJson": {
+      "type": "object",
+      "required": ["items"],
+      "properties": { "items": { "type": "array", "items": { "type": "object" } } },
+      "additionalProperties": true
+    },
+    "PaperQAGateJson": {
+      "type": "object",
+      "required": ["accepted", "source", "issues", "rewrites_applied"],
+      "properties": {
+        "accepted": { "type": "boolean" },
+        "source": { "type": "string" },
+        "issues": { "type": "array", "items": { "type": "string" } },
+        "rewrites_applied": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
+    "DiagnosisReportJson": {
+      "type": "object",
+      "required": ["decision", "summary", "paper_parse_quality", "items"],
+      "properties": {
+        "decision": { "type": "string" },
+        "summary": { "type": "object" },
+        "paper_parse_quality": { "type": "object" },
+        "items": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": true
+    },
+    "FullReviewJson": {
+      "type": "object",
+      "required": [
+        "decision",
+        "manuscript_stage",
+        "scores",
+        "score_explanations",
+        "all_risks",
+        "focus_risks",
+        "claim_evidence_matrix",
+        "reviewer_question_simulation",
+        "remediation_tasks",
+        "rebuttal_plan",
+        "rebuttal",
+        "submission_readiness"
+      ],
+      "properties": {
+        "decision": { "type": "string" },
+        "manuscript_stage": { "$ref": "#/$defs/ManuscriptStage" },
+        "scores": { "$ref": "#/$defs/ScoreBundle" },
+        "score_explanations": { "$ref": "#/$defs/ScoreExplanations" },
+        "all_risks": { "type": "array", "items": { "$ref": "#/$defs/RiskItem" } },
+        "focus_risks": { "type": "array", "items": { "$ref": "#/$defs/RiskItem" } },
+        "claim_evidence_matrix": { "type": "array", "items": { "$ref": "#/$defs/ClaimAlignment" } },
+        "reviewer_question_simulation": { "$ref": "#/$defs/ReviewerQuestionsJson" },
+        "remediation_tasks": { "type": "array", "items": { "$ref": "#/$defs/ExperimentTask" } },
+        "rebuttal_plan": { "$ref": "#/$defs/RebuttalPlanJson" },
+        "rebuttal": { "$ref": "#/$defs/RebuttalBundle" },
+        "submission_readiness": { "$ref": "#/$defs/SubmissionReadiness" }
+      },
+      "additionalProperties": true
+    },
+    "VenueRecommendationsJson": {
+      "type": "object",
+      "required": ["method", "target_year", "candidate_count", "recommended_venues"],
+      "properties": {
+        "method": { "type": "string" },
+        "target_year": { "type": "integer" },
+        "candidate_count": { "type": "integer" },
+        "recommended_venues": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": true
+    },
+    "VenueProfileUsedJson": {
+      "type": "object",
+      "required": ["venue", "year", "used_fallback", "source", "policy_needs_manual_check", "source_notes", "profile"],
+      "properties": {
+        "venue": { "type": "string" },
+        "year": { "type": "integer" },
+        "used_fallback": { "type": "boolean" },
+        "source": { "type": "string" },
+        "policy_needs_manual_check": { "type": "boolean" },
+        "source_notes": { "type": "array", "items": { "type": "string" } },
+        "profile": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "SkillFlowUsedJson": {
+      "type": "object",
+      "required": ["source", "steps", "warnings", "mcp_capabilities"],
+      "properties": {
+        "source": { "type": "string" },
+        "steps": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "mcp_capabilities": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "MCPRuntimeJson": {
+      "type": "object",
+      "required": ["backend", "provider", "capabilities"],
+      "properties": {
+        "backend": { "type": "string" },
+        "provider": { "type": "string" },
+        "capabilities": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "FeedbackTemplateJson": {
+      "type": "object",
+      "required": ["schema_version", "run_id", "paper_title", "venue", "year", "items"],
+      "properties": {
+        "schema_version": { "type": "integer" },
+        "run_id": { "type": "string" },
+        "paper_title": { "type": "string" },
+        "venue": { "type": "string" },
+        "year": { "type": "integer" },
+        "items": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": true
+    },
+    "PipelineStepsJson": {
+      "type": "object",
+      "required": ["steps"],
+      "properties": { "steps": { "type": "array", "items": { "$ref": "#/$defs/StepStatus" } } },
+      "additionalProperties": true
+    },
+    "Deliverables": {
+      "type": "object",
+      "required": [
+        "decision_brief_en",
+        "submission_readiness_en",
+        "full_review_en",
+        "diagnosis_report_en",
+        "rebuttal_en",
+        "rebuttal_plan",
+        "rebuttal_precheck",
+        "paper_qa_gate",
+        "claim_evidence_matrix",
+        "claim_discovery",
+        "reviewer_questions",
+        "remediation_plan",
+        "venue_recommendations",
+        "venue_profile_used",
+        "skill_flow_used",
+        "mcp_runtime",
+        "feedback_template",
+        "run_summary",
+        "pipeline_steps",
+        "historical_profile"
+      ],
+      "properties": {
+        "decision_brief_en": { "$ref": "#/$defs/DecisionBriefJson" },
+        "submission_readiness_en": { "$ref": "#/$defs/SubmissionReadiness" },
+        "full_review_en": { "$ref": "#/$defs/FullReviewJson" },
+        "diagnosis_report_en": { "$ref": "#/$defs/DiagnosisReportJson" },
+        "rebuttal_en": { "$ref": "#/$defs/RebuttalBundle" },
+        "rebuttal_plan": { "$ref": "#/$defs/RebuttalPlanJson" },
+        "rebuttal_precheck": { "$ref": "#/$defs/RebuttalPrecheckJson" },
+        "paper_qa_gate": { "$ref": "#/$defs/PaperQAGateJson" },
+        "claim_evidence_matrix": { "$ref": "#/$defs/ClaimEvidenceMatrixJson" },
+        "claim_discovery": { "$ref": "#/$defs/ClaimDiscoveryJson" },
+        "reviewer_questions": { "$ref": "#/$defs/ReviewerQuestionsJson" },
+        "remediation_plan": { "$ref": "#/$defs/RemediationPlanJson" },
+        "venue_recommendations": { "$ref": "#/$defs/VenueRecommendationsJson" },
+        "venue_profile_used": { "$ref": "#/$defs/VenueProfileUsedJson" },
+        "skill_flow_used": { "$ref": "#/$defs/SkillFlowUsedJson" },
+        "mcp_runtime": { "$ref": "#/$defs/MCPRuntimeJson" },
+        "feedback_template": { "$ref": "#/$defs/FeedbackTemplateJson" },
+        "run_summary": { "$ref": "#/$defs/RunSummary" },
+        "pipeline_steps": { "$ref": "#/$defs/PipelineStepsJson" },
+        "historical_profile": { "type": "object" },
+        "run_result": { "$ref": "#/$defs/RunResult" },
+        "decision_brief_zh": { "$ref": "#/$defs/DecisionBriefJson" },
+        "submission_readiness_zh": { "$ref": "#/$defs/SubmissionReadiness" },
+        "full_review_zh": { "$ref": "#/$defs/FullReviewJson" },
+        "diagnosis_report_zh": { "$ref": "#/$defs/DiagnosisReportJson" },
+        "rebuttal_zh": { "$ref": "#/$defs/RebuttalBundle" }
+      },
+      "additionalProperties": true
     }
   }
 }

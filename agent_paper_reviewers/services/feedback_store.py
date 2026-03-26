@@ -46,6 +46,7 @@ def build_feedback_template(
                 "likely_reject_phrase": reject_phrase,
                 "fix_hint": str(risk.get("fix_hint", "")),
                 "verdict": "pending",  # set to correct|incorrect|pending
+                "confidence": 0.8,  # optional: 0.0~1.0, higher means stronger user certainty.
                 "comment": "",
             }
         )
@@ -91,6 +92,7 @@ def submit_feedback(repo_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
                 "reason": reason,
                 "likely_reject_phrase": reject_phrase,
                 "verdict": verdict_raw,
+                "confidence": _coerce_confidence(item.get("confidence", 0.8)),
                 "comment": str(item.get("comment", "")).strip(),
             }
         )
@@ -143,12 +145,18 @@ def load_feedback_records(repo_root: Path, venue: str, year: int) -> list[dict[s
     return out
 
 
-def build_feedback_profile(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def build_feedback_profile(
+    records: list[dict[str, Any]],
+    *,
+    target_year: int | None = None,
+) -> dict[str, dict[str, Any]]:
     profile: dict[str, dict[str, Any]] = {}
     for record in records:
         items = record.get("items", [])
         if not isinstance(items, list):
             continue
+        record_year = int(record.get("year", 0) or 0)
+        year_weight = _year_weight(record_year, target_year)
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -156,12 +164,30 @@ def build_feedback_profile(records: list[dict[str, Any]]) -> dict[str, dict[str,
             verdict = str(item.get("verdict", "")).strip().lower()
             if not fp or verdict not in {"correct", "incorrect"}:
                 continue
+            confidence = _coerce_confidence(item.get("confidence", 0.8))
+            comment = str(item.get("comment", "")).strip()
+            comment_weight = 1.05 if comment else 1.0
+            sample_weight = max(0.2, min(1.6, confidence * comment_weight * year_weight))
             bucket = profile.setdefault(
                 fp,
-                {"correct": 0, "incorrect": 0, "comments": []},
+                {
+                    "correct": 0,
+                    "incorrect": 0,
+                    "correct_weighted": 0.0,
+                    "incorrect_weighted": 0.0,
+                    "total_weighted": 0.0,
+                    "comments": [],
+                },
             )
             bucket[verdict] += 1
-            comment = str(item.get("comment", "")).strip()
+            bucket[f"{verdict}_weighted"] = round(
+                float(bucket.get(f"{verdict}_weighted", 0.0) or 0.0) + sample_weight,
+                6,
+            )
+            bucket["total_weighted"] = round(
+                float(bucket.get("total_weighted", 0.0) or 0.0) + sample_weight,
+                6,
+            )
             if comment:
                 bucket["comments"].append(comment)
     return profile
@@ -188,7 +214,10 @@ def apply_feedback_profile(risks: list[dict], profile: dict[str, dict[str, Any]]
         correct = int(stat.get("correct", 0) or 0)
         incorrect = int(stat.get("incorrect", 0) or 0)
         total = correct + incorrect
-        if total <= 0:
+        weighted_correct = float(stat.get("correct_weighted", correct) or 0.0)
+        weighted_incorrect = float(stat.get("incorrect_weighted", incorrect) or 0.0)
+        weighted_total = weighted_correct + weighted_incorrect
+        if total <= 0 or weighted_total <= 0:
             adjusted.append(row)
             continue
 
@@ -196,15 +225,21 @@ def apply_feedback_profile(risks: list[dict], profile: dict[str, dict[str, Any]]
         original = float(row.get("score", 0.0) or 0.0)
         new_score = original
         action = "none"
+        posterior_incorrect = (weighted_incorrect + 1.0) / (weighted_total + 2.0)
+        posterior_correct = (weighted_correct + 1.0) / (weighted_total + 2.0)
+        margin = abs(posterior_incorrect - posterior_correct)
+        support = min(1.0, weighted_total / 4.0)
+        calibration_confidence = round(margin * support, 4)
 
-        incorrect_ratio = incorrect / total
-        correct_ratio = correct / total
-        if total >= 2 and incorrect_ratio >= 0.6:
-            new_score = max(0.0, original - 0.08)
-            action = "down"
-        elif total >= 3 and correct_ratio >= 0.7:
-            new_score = min(1.0, original + 0.05)
-            action = "up"
+        if total >= 2 and margin >= 0.12:
+            shift = (0.02 + (margin - 0.12) * 0.28) * support
+            shift = max(0.015, min(0.14, shift))
+            if posterior_incorrect > posterior_correct:
+                new_score = max(0.0, original - shift)
+                action = "down"
+            elif posterior_correct > posterior_incorrect:
+                new_score = min(1.0, original + min(0.12, shift))
+                action = "up"
 
         if action != "none":
             row["score"] = round(new_score, 3)
@@ -213,6 +248,11 @@ def apply_feedback_profile(risks: list[dict], profile: dict[str, dict[str, Any]]
                 "original_score": round(original, 3),
                 "correct": correct,
                 "incorrect": incorrect,
+                "weighted_correct": round(weighted_correct, 3),
+                "weighted_incorrect": round(weighted_incorrect, 3),
+                "posterior_correct": round(posterior_correct, 4),
+                "posterior_incorrect": round(posterior_incorrect, 4),
+                "calibration_confidence": calibration_confidence,
                 "comments": stat.get("comments", [])[:2],
             }
             row["severity"] = _severity_from_score(new_score)
@@ -224,6 +264,11 @@ def apply_feedback_profile(risks: list[dict], profile: dict[str, dict[str, Any]]
                     "new_score": round(new_score, 3),
                     "correct": correct,
                     "incorrect": incorrect,
+                    "weighted_correct": round(weighted_correct, 3),
+                    "weighted_incorrect": round(weighted_incorrect, 3),
+                    "posterior_correct": round(posterior_correct, 4),
+                    "posterior_incorrect": round(posterior_incorrect, 4),
+                    "calibration_confidence": calibration_confidence,
                 }
             )
         adjusted.append(row)
@@ -238,3 +283,26 @@ def _severity_from_score(score: float) -> str:
     if score >= 0.45:
         return "P1"
     return "P2"
+
+
+def _coerce_confidence(value: object) -> float:
+    try:
+        conf = float(value)
+    except (TypeError, ValueError):
+        conf = 0.8
+    if conf < 0.2:
+        return 0.2
+    if conf > 1.0:
+        return 1.0
+    return round(conf, 3)
+
+
+def _year_weight(record_year: int, target_year: int | None) -> float:
+    if target_year is None or target_year <= 0 or record_year <= 0:
+        return 1.0
+    delta = abs(record_year - target_year)
+    if delta == 0:
+        return 1.0
+    if delta == 1:
+        return 0.75
+    return 0.55

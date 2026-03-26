@@ -4,7 +4,7 @@ import json
 import re
 
 from ..executors.base import ExecutorAdapter
-from ..models import RebuttalBundle, RebuttalItem, TaskSpec
+from ..models import EvidenceRef, RebuttalBundle, RebuttalItem, TaskSpec
 from ..services.translator import Translator
 from .base import PipelineContext, PipelineStep
 
@@ -190,6 +190,10 @@ class RebuttalComposerStep(PipelineStep):
                     s = str(ev).strip()
                     if s and s not in evidence_targets:
                         evidence_targets.append(s)
+        anchor_refs, anchor_hint = RebuttalComposerStep._collect_anchor_refs(
+            risk=risk,
+            predicted_followups=predicted_followups,
+        )
         return {
             "review_id": review_id,
             "concern": concern,
@@ -197,6 +201,8 @@ class RebuttalComposerStep(PipelineStep):
             "risk_reason": str(risk.get("reason", "") if isinstance(risk, dict) else ""),
             "linked_remediation_tasks": linked_tasks,
             "evidence_targets": evidence_targets[:4],
+            "evidence_anchor_refs": anchor_refs[:3],
+            "evidence_anchor_hint": anchor_hint,
             "predicted_followup_questions": [
                 str(row.get("question", "")).strip()
                 for row in predicted_followups
@@ -271,6 +277,11 @@ class RebuttalComposerStep(PipelineStep):
             )
 
             precheck_pass = bool(pre.get("pass", True)) if isinstance(pre, dict) else True
+            precheck_repair_applied = bool(pre.get("repair_applied", False)) if isinstance(pre, dict) else False
+            risk_reason = str(plan.get("risk_reason", "")).strip()
+            stat_concern = RebuttalComposerStep._is_statistical_concern(f"{concern} {risk_reason}")
+            stat_meta = RebuttalComposerStep._statistical_fix_meta(blob) if stat_concern else {}
+            critical_stat_gap = False
             gaps: list[str] = []
             actions: list[str] = []
             if concern_coverage < 0.25:
@@ -294,8 +305,26 @@ class RebuttalComposerStep(PipelineStep):
             if not precheck_pass:
                 gaps.append("precheck_failed")
                 actions.append("Use precheck issues to regenerate a stronger item.")
+            if precheck_repair_applied:
+                gaps.append("auto_repair_applied")
+                actions.append("Manually verify repaired rebuttal text before submission.")
+            if stat_concern:
+                critical_missing = stat_meta.get("critical_missing", []) if isinstance(stat_meta, dict) else []
+                quality_missing = stat_meta.get("quality_missing", []) if isinstance(stat_meta, dict) else []
+                if critical_missing:
+                    critical_stat_gap = True
+                    gaps.append("statistical_fix_incomplete")
+                    actions.append(
+                        "For statistical concerns, explicitly provide seed plan, significance tests or p-values, "
+                        "and uncertainty reporting (mean/std or confidence intervals)."
+                    )
+                elif quality_missing:
+                    gaps.append("statistical_fix_needs_specificity")
+                    actions.append(
+                        "Add metric-scope and threshold details (e.g., all primary metrics, explicit p-value threshold)."
+                    )
 
-            if has_hallucination or not char_budget_ok:
+            if has_hallucination or not char_budget_ok or critical_stat_gap:
                 status = "fail"
             elif gaps:
                 status = "warning"
@@ -315,6 +344,9 @@ class RebuttalComposerStep(PipelineStep):
                         "anchor_present": bool(anchor_present),
                         "char_budget_ok": bool(char_budget_ok),
                         "precheck_pass": bool(precheck_pass),
+                        "precheck_repair_applied": bool(precheck_repair_applied),
+                        "statistical_strict_pass": bool(stat_meta.get("strict_pass", True)) if stat_concern else None,
+                        "statistical_strength_score": int(stat_meta.get("strength_score", 0)) if stat_concern else None,
                     },
                     "gaps": gaps,
                     "actions": list(dict.fromkeys(actions)),
@@ -480,6 +512,10 @@ class RebuttalComposerStep(PipelineStep):
         new_evidence = fallback_evidence
         paper_change = fallback_change
         source = "template"
+        anchor_refs, anchor_hint = self._collect_anchor_refs(
+            risk=risk,
+            predicted_followups=predicted_followups,
+        )
 
         if self.executor is not None:
             generated = self._compose_item_with_executor(
@@ -501,6 +537,10 @@ class RebuttalComposerStep(PipelineStep):
             new_evidence=new_evidence,
             predicted_followups=predicted_followups,
         )
+        new_evidence = self._inject_anchor_hint(
+            new_evidence=new_evidence,
+            anchor_hint=anchor_hint,
+        )
 
         response, new_evidence, paper_change, precheck = self._precheck_and_repair(
             ctx,
@@ -511,18 +551,22 @@ class RebuttalComposerStep(PipelineStep):
             paper_change=paper_change,
             char_limit=char_limit,
         )
+        new_evidence = self._inject_anchor_hint(
+            new_evidence=new_evidence,
+            anchor_hint=anchor_hint,
+        )
         precheck["source"] = source
         precheck["risk_id"] = str(risk.get("id") or "")
 
-        composed = self._compose_block(concern, response, new_evidence, paper_change)
+        composed = self._compose_block(concern, response, new_evidence, paper_change, anchor_hint)
         if len(composed) > char_limit:
             response = self._shrink_response(response, len(composed) - char_limit)
-            composed = self._compose_block(concern, response, new_evidence, paper_change)
+            composed = self._compose_block(concern, response, new_evidence, paper_change, anchor_hint)
 
         if len(composed) > char_limit:
             reserve = max(60, char_limit - len("Concern: \nResponse: \nNew evidence: \nPaper change: "))
             response = response[:reserve].rstrip()
-            composed = self._compose_block(concern, response, new_evidence, paper_change)
+            composed = self._compose_block(concern, response, new_evidence, paper_change, anchor_hint)
 
         row = RebuttalItem(
             review_id=review_id,
@@ -530,6 +574,8 @@ class RebuttalComposerStep(PipelineStep):
             response=response,
             new_evidence=new_evidence,
             paper_change=paper_change,
+            evidence_anchor_refs=[EvidenceRef.model_validate(x) for x in anchor_refs],
+            evidence_anchor_hint=anchor_hint,
             char_count=len(composed),
             char_limit=char_limit,
         )
@@ -553,6 +599,109 @@ class RebuttalComposerStep(PipelineStep):
             out.append(f"Preempt likely follow-up: {q}")
             break
         return out
+
+    @staticmethod
+    def _inject_anchor_hint(new_evidence: list[str], anchor_hint: str) -> list[str]:
+        out = [str(x).strip() for x in new_evidence if str(x).strip()]
+        hint = str(anchor_hint or "").strip()
+        if not hint:
+            return out
+        if any("[see:" in x.lower() for x in out):
+            return out
+        out.append(f"Evidence anchors: {hint}")
+        return out
+
+    @staticmethod
+    def _collect_anchor_refs(*, risk: dict, predicted_followups: list[dict]) -> tuple[list[dict], str]:
+        refs: list[dict] = []
+        for ref in risk.get("evidence_refs", []) if isinstance(risk.get("evidence_refs", []), list) else []:
+            normalized = RebuttalComposerStep._normalize_anchor_ref(ref)
+            if normalized is not None:
+                refs.append(normalized)
+
+        if isinstance(predicted_followups, list):
+            for row in predicted_followups:
+                if not isinstance(row, dict):
+                    continue
+                raw_refs = row.get("evidence_anchor_refs", [])
+                if not isinstance(raw_refs, list):
+                    continue
+                for ref in raw_refs:
+                    normalized = RebuttalComposerStep._normalize_anchor_ref(ref)
+                    if normalized is not None:
+                        refs.append(normalized)
+
+        refs = RebuttalComposerStep._dedupe_anchor_refs(refs)[:3]
+        hint = RebuttalComposerStep._anchor_hint(refs)
+        return refs, hint
+
+    @staticmethod
+    def _normalize_anchor_ref(ref: object) -> dict | None:
+        if not isinstance(ref, dict):
+            return None
+        section = str(ref.get("section", "")).strip()
+        passage_id = str(ref.get("passage_id", "")).strip()
+        if not section or not passage_id:
+            return None
+        try:
+            page = int(ref.get("page", 0) or 0)
+        except (TypeError, ValueError):
+            page = 0
+        try:
+            section_index = int(ref.get("section_index", 0) or 0)
+        except (TypeError, ValueError):
+            section_index = 0
+        try:
+            confidence_score = float(ref.get("confidence_score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            confidence_score = 0.0
+        return {
+            "section": section,
+            "passage_id": passage_id,
+            "excerpt": str(ref.get("excerpt", "")).strip()[:220],
+            "section_id": str(ref.get("section_id", "")).strip(),
+            "section_index": section_index,
+            "page": page,
+            "kind": str(ref.get("kind", "")).strip(),
+            "anchor_label": str(ref.get("anchor_label", "")).strip(),
+            "anchor_type": str(ref.get("anchor_type", "")).strip(),
+            "locator": ref.get("locator", {}) if isinstance(ref.get("locator", {}), dict) else {},
+            "confidence_level": str(ref.get("confidence_level", "")).strip(),
+            "confidence_score": confidence_score,
+            "conflict_alert": bool(ref.get("conflict_alert", False)),
+            "conflict_reason": str(ref.get("conflict_reason", "")).strip(),
+            "relation": str(ref.get("relation", "support")).strip() or "support",
+        }
+
+    @staticmethod
+    def _dedupe_anchor_refs(refs: list[dict]) -> list[dict]:
+        out: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for ref in refs:
+            if not isinstance(ref, dict):
+                continue
+            key = (
+                str(ref.get("section", "")).strip().lower(),
+                str(ref.get("passage_id", "")).strip().lower(),
+            )
+            if not all(key) or key in seen:
+                continue
+            seen.add(key)
+            out.append(ref)
+        return out
+
+    @staticmethod
+    def _anchor_hint(refs: list[dict]) -> str:
+        hints: list[str] = []
+        for ref in refs[:3]:
+            if not isinstance(ref, dict):
+                continue
+            section = str(ref.get("section", "")).strip()
+            passage_id = str(ref.get("passage_id", "")).strip()
+            if not section or not passage_id:
+                continue
+            hints.append(f"[see: {section} -> {passage_id}]")
+        return " ".join(hints)
 
     def _compose_item_with_executor(
         self,
@@ -839,6 +988,33 @@ class RebuttalComposerStep(PipelineStep):
             else:
                 ctx.add_qa_issue(f"rebuttal_precheck_warning:{review_id}:coverage_low")
 
+        if self._is_statistical_concern(concern):
+            stat_meta = self._statistical_fix_meta(target)
+            record["statistical_check"] = stat_meta
+            critical_missing = stat_meta.get("critical_missing", [])
+            quality_missing = stat_meta.get("quality_missing", [])
+            if critical_missing:
+                record["pass"] = False
+                for miss in critical_missing:
+                    issue = f"statistical_missing:{miss}"
+                    if issue not in record["issues"]:
+                        record["issues"].append(issue)
+                response, new_evidence, paper_change = self._repair_statistical_incompleteness(
+                    response=response,
+                    new_evidence=new_evidence,
+                    paper_change=paper_change,
+                )
+                record["repair_applied"] = True
+                ctx.add_qa_issue(f"rebuttal_precheck_warning:{review_id}:statistical_fix_incomplete")
+                repaired_target = " ".join([response, *new_evidence, paper_change]).lower()
+                record["statistical_check_after_repair"] = self._statistical_fix_meta(repaired_target)
+            elif quality_missing:
+                for miss in quality_missing:
+                    issue = f"statistical_quality_gap:{miss}"
+                    if issue not in record["issues"]:
+                        record["issues"].append(issue)
+                ctx.add_qa_issue(f"rebuttal_precheck_warning:{review_id}:statistical_quality_gap")
+
         (
             response,
             new_evidence,
@@ -858,6 +1034,7 @@ class RebuttalComposerStep(PipelineStep):
             )
         record["repair_applied"] = bool(record["repair_applied"] or hallucination_meta.get("repair_applied", False))
         record["hallucination"] = hallucination_meta
+        record["issues"] = [str(x) for x in dict.fromkeys(record["issues"]) if str(x).strip()]
 
         return response, new_evidence, paper_change, record
 
@@ -971,6 +1148,114 @@ class RebuttalComposerStep(PipelineStep):
         if tail.strip() in response:
             return response
         return (response.rstrip() + tail).strip()
+
+    @staticmethod
+    def _is_statistical_concern(text: str) -> bool:
+        blob = str(text or "").lower()
+        return any(
+            token in blob
+            for token in [
+                "statistical",
+                "significance",
+                "p-value",
+                "p value",
+                "confidence interval",
+                "seed",
+                "variance",
+                "mean/std",
+                "std",
+            ]
+        )
+
+    @staticmethod
+    def _statistical_fix_meta(text: str) -> dict:
+        blob = str(text or "").lower()
+        has_seed_plan = bool(re.search(r"\b\d+\s*seeds?\b|\bmulti[-\s]?seed\b|\bmultiple\s+seeds\b", blob))
+        has_test_name = bool(
+            re.search(
+                r"\b(significance\s+tests?|paired\s+tests?|paired\s+t-?tests?|t-?tests?|wilcoxon|mann[-\s]?whitney|anova|bootstrap)\b",
+                blob,
+            )
+        )
+        has_pvalue = bool(re.search(r"\bp\s*(?:<|<=|=)\s*0?\.\d+|\bp-?value\b", blob))
+        has_uncertainty = bool(
+            re.search(
+                r"\b(mean\s*/\s*std|mean\s*\+/-\s*std|mean and std|std\b|standard deviation|variance|confidence interval|95%\s*ci|\bci\b)\b",
+                blob,
+            )
+        )
+        has_metric_scope = bool(re.search(r"\b(all|each|every)\s+(?:primary|main|headline)?\s*metrics?\b|\bprimary\s+metrics?\b", blob))
+        has_numeric_threshold = bool(re.search(r"\bp\s*(?:<|<=|=)\s*0?\.\d+|\b95%\s*ci\b|\b99%\s*ci\b", blob))
+        has_test_or_pvalue = bool(has_test_name or has_pvalue)
+
+        critical_missing: list[str] = []
+        if not has_seed_plan:
+            critical_missing.append("seed_plan")
+        if not has_test_or_pvalue:
+            critical_missing.append("significance_test_or_pvalue")
+        if not has_uncertainty:
+            critical_missing.append("uncertainty_reporting")
+
+        quality_missing: list[str] = []
+        if not has_metric_scope:
+            quality_missing.append("metric_scope")
+        if not has_numeric_threshold:
+            quality_missing.append("numeric_threshold")
+
+        strength_score = sum(
+            [
+                bool(has_seed_plan),
+                bool(has_test_or_pvalue),
+                bool(has_uncertainty),
+                bool(has_metric_scope),
+                bool(has_numeric_threshold),
+            ]
+        )
+        return {
+            "strict_pass": len(critical_missing) == 0,
+            "strength_score": int(strength_score),
+            "has_seed_plan": bool(has_seed_plan),
+            "has_test_or_pvalue": bool(has_test_or_pvalue),
+            "has_uncertainty_reporting": bool(has_uncertainty),
+            "has_metric_scope": bool(has_metric_scope),
+            "has_numeric_threshold": bool(has_numeric_threshold),
+            "critical_missing": critical_missing,
+            "quality_missing": quality_missing,
+        }
+
+    @staticmethod
+    def _repair_statistical_incompleteness(
+        *,
+        response: str,
+        new_evidence: list[str],
+        paper_change: str,
+    ) -> tuple[str, list[str], str]:
+        response_addon = (
+            " We will run at least 5 seeds and report mean/std plus 95% confidence intervals on all primary metrics, "
+            "together with paired significance tests and explicit p-value thresholds (p<0.05)."
+        )
+        if "at least 5 seeds" not in response.lower():
+            response = (response.rstrip() + response_addon).strip()
+
+        evidence = [str(x).strip() for x in new_evidence if str(x).strip()]
+        strict_bullet_1 = (
+            "Add statistical validation table with >=5 seeds, mean/std, 95% confidence intervals, and paired tests "
+            "(p<0.05) for all primary metrics."
+        )
+        strict_bullet_2 = "Report metric-level p-values and indicate which gains remain significant."
+        if not any(">=5 seeds" in x or "at least 5 seeds" in x.lower() for x in evidence):
+            evidence.append(strict_bullet_1)
+        if not any("metric-level p-values" in x.lower() or "p-values" in x.lower() for x in evidence):
+            evidence.append(strict_bullet_2)
+
+        lower_change = paper_change.lower()
+        if "statistical analysis" not in lower_change and "significance" not in lower_change:
+            paper_change = (
+                paper_change.rstrip(".")
+                + "; add a dedicated Statistical Analysis subsection with seed settings, test protocol, and thresholds."
+            ).strip()
+
+        return response, evidence[:6], paper_change
 
     def _hallucination_guard(
         self,
@@ -1277,11 +1562,21 @@ class RebuttalComposerStep(PipelineStep):
         return value[:1200]
 
     @staticmethod
-    def _compose_block(concern: str, response: str, new_evidence: list[str], paper_change: str) -> str:
+    def _compose_block(
+        concern: str,
+        response: str,
+        new_evidence: list[str],
+        paper_change: str,
+        evidence_anchor_hint: str = "",
+    ) -> str:
+        anchor_line = ""
+        if str(evidence_anchor_hint or "").strip():
+            anchor_line = f"Evidence anchors: {evidence_anchor_hint}\n"
         return (
             f"Concern: {concern}\n"
             f"Response: {response}\n"
             f"New evidence: {'; '.join(new_evidence)}\n"
+            f"{anchor_line}"
             f"Paper change: {paper_change}"
         )
 
@@ -1303,6 +1598,8 @@ class RebuttalComposerStep(PipelineStep):
                     response=self.translator.to_zh(item.response),
                     new_evidence=[self.translator.to_zh(x) for x in item.new_evidence],
                     paper_change=self.translator.to_zh(item.paper_change),
+                    evidence_anchor_refs=list(item.evidence_anchor_refs),
+                    evidence_anchor_hint=item.evidence_anchor_hint,
                     char_count=item.char_count,
                     char_limit=item.char_limit,
                 )
@@ -1330,6 +1627,14 @@ class RebuttalComposerStep(PipelineStep):
             lines.extend(["## Global Positioning", "", bundle.global_response, ""])
 
         for item in bundle.items:
+            anchor_lines = []
+            if item.evidence_anchor_hint:
+                anchor_lines.append(f"- {item.evidence_anchor_hint}")
+            elif item.evidence_anchor_refs:
+                for ref in item.evidence_anchor_refs[:3]:
+                    anchor_lines.append(
+                        f"- [see: {ref.section} -> {ref.passage_id}]"
+                    )
             lines.extend(
                 [
                     f"## Response to Reviewer {item.review_id}",
@@ -1345,6 +1650,10 @@ class RebuttalComposerStep(PipelineStep):
                     "### New Evidence",
                     "",
                     *[f"- {x}" for x in item.new_evidence],
+                    "",
+                    "### Evidence Anchors",
+                    "",
+                    *(anchor_lines if anchor_lines else ["- n/a"]),
                     "",
                     "### Paper Changes",
                     "",
@@ -1368,6 +1677,14 @@ class RebuttalComposerStep(PipelineStep):
             lines.extend(["## 总体回应", "", bundle.global_response, ""])
 
         for item in bundle.items:
+            anchor_lines = []
+            if item.evidence_anchor_hint:
+                anchor_lines.append(f"- {item.evidence_anchor_hint}")
+            elif item.evidence_anchor_refs:
+                for ref in item.evidence_anchor_refs[:3]:
+                    anchor_lines.append(
+                        f"- [see: {ref.section} -> {ref.passage_id}]"
+                    )
             lines.extend(
                 [
                     f"## 对审稿人 {item.review_id} 的回复",
@@ -1383,6 +1700,10 @@ class RebuttalComposerStep(PipelineStep):
                     "### 新增证据",
                     "",
                     *[f"- {x}" for x in item.new_evidence],
+                    "",
+                    "### 证据锚点",
+                    "",
+                    *(anchor_lines if anchor_lines else ["- n/a"]),
                     "",
                     "### 论文修改位置",
                     "",

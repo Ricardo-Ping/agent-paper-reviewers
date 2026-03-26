@@ -15,12 +15,31 @@ I built this project for one practical reason: before submission, I want to run 
 - Parse paper drafts (`pdf` / `md`) into structured sections.
 - Run claim-evidence alignment checks.
 - Detect common missing checks: baseline, significance, ablation, error analysis, reproducibility.
+- Add venue-aware writing-structure checks for section-length balance (`introduction/method/experiments/discussion`).
+- Add terminology consistency checks (acronym expansion drift, mixed term variants, unstable naming).
 - Rank rejection risks (P0/P1/P2).
 - Generate prioritized remediation plans.
 - Draft rebuttal responses per reviewer concern.
 - Recommend Top venues when you are not sure where to submit (with match score, reasons, and key gaps).
 - Add score-leverage analysis (which axis drags overall score most and what to improve first).
 - Export single-language or bilingual artifacts (`en` / `en_zh`).
+
+## Positioning vs Common Tools
+Many tools are useful, but they solve different problems.  
+`agent-paper-reviewers` is not trying to replace everything. It fills the missing “pre-submission rejection rehearsal” layer.
+
+| Category | Typical Tools | What they do well | Common blind spot | How `agent-paper-reviewers` complements |
+|---|---|---|---|---|
+| Language polishing | Paperpal / Writefull / Trinka | Grammar, wording, fluency | Language quality only; not rejection-risk reasoning | Upgrades from “well written” to “claim is defensible” |
+| Paper discovery / Q&A | Semantic Scholar / Elicit / Consensus | Search and evidence lookup | No submission-risk grading | Produces actionable rejection risk levels (P0/P1/P2) |
+| Submission technical checks | Paperpal Preflight / Typeset | Format, length, figure/table compliance | Format-heavy, weak argument validation | Adds claim-evidence alignment and experiment-gap checks |
+| Professional editing services | Enago / AJE | Human expert editing | Expensive, slower cycle, less structured outputs | Automated, repeatable, structured JSON/MD/PDF artifacts |
+| Academic RAG | PaperQA / Keep | Cross-paper QA and citation support | QA-centric, not submission-diagnosis-centric | Generates full issue-cause-fix-impact diagnosis reports |
+| Research agent assistants | Coauthor / AutoRF | Research workflow assistance | Often generation-heavy, weak rejection-rehearsal loop | End-to-end loop: risk -> remediation -> rebuttal |
+| OpenReview itself | OpenReview | Real review and discussion platform | Real review happens after submission | Simulated strict review before submission |
+
+One-line summary:  
+The unique value here is an executable loop: risk detection -> evidence alignment -> remediation experiments -> rebuttal drafting -> self-check.
 
 ## Architecture
 - Skill-driven flow: ordered by `agent-paper-reviewers-skill/flow_config.yaml`.
@@ -76,6 +95,8 @@ pip install -e .
 ### 4. Verify runtime
 ```bash
 python -m agent_paper_reviewers.cli doctor
+# machine-readable output (for scripts/CI)
+python -m agent_paper_reviewers.cli doctor --json
 ```
 
 ### 5. (Optional) Enable PDF export toolchain
@@ -169,6 +190,15 @@ Common environment variables:
 - `AGENT_PAPER_REVIEWERS_PROFILE_ROOT` (optional override for historical profile storage; default `./profiles`)
 
 ## Output artifacts
+### Student-first entry (recommended)
+- `START_HERE.md`: quick entry that tells you which 3 files to read first.
+- `student_pack/en/001-submission-decision.md`: one-page submit/hold decision with top blockers.
+- `student_pack/en/002-action-items.md`: executable action list with anchors and effort hints.
+- `student_pack/en/003-rebuttal-draft.md`: risk-mapped rebuttal draft by reviewer concern.
+- In bilingual mode, matching `student_pack/zh/*` and `START_HERE.zh.md` are also generated.
+
+This `student_pack` is the human-readable default workflow. The other JSON/intermediate files are mainly for debugging, traceability, and feedback loops.
+
 ### Core reports
 - `decision_brief.en.md/json`: short decision report (with per-axis score rationale).
 - `full_review.en.md/json`: full detailed review report (with per-axis score rationale).
@@ -185,6 +215,13 @@ Common environment variables:
 - `diagnosis_report.zh.md/json`
 - `rebuttal.zh.md/json`
 - If `options.always_export_pdf=true`, matching `*.pdf` files are also generated.
+
+### Bilingual translation quality note
+- Bilingual outputs are for readability and internal collaboration, not publication-grade final translation.
+- Translation uses a fallback chain: glossary replacement -> GoogleTranslator -> MarianMT -> executor `translate_zh` -> stable pseudo-translate fallback.
+- Under deterministic executor, offline mode, or unavailable translation backends, the pipeline may fall back to pseudo-translate; Chinese text can be mixed or unnatural.
+- For submission-facing text, keep English as the source of truth and manually proofread Chinese mirrors.
+- To improve Chinese quality, use an executor backend with real translation capability and ensure network/API availability.
 
 ### Structured/debug outputs
 - `claim_discovery.json`
@@ -226,9 +263,10 @@ Venue rules are now directory-based under `data/venue_rules/<venue>/<year>.yaml`
 ## FAQ
 - Why no PDFs by default: PDF export is disabled by default; the default workflow outputs `md+json`, which is usually enough for Overleaf copy/paste and editing.
 - How to enable PDFs: set `"options": {"always_export_pdf": true}` in your input JSON.
-- PDF export fails: run `doctor` and check `pandoc`/LaTeX engines.
+- PDF export fails: run `doctor` and check the `pdf export capability (optional)` row, or run `doctor --json` and verify `pdf_export.ready`.
 - `pdf_parse_quality_*` warnings: parser quality is likely low; verify the PDF has a text layer, or run OCR / convert to clean Markdown before review.
 - Chinese text looks broken: open files with UTF-8 encoding.
+- `pseudo-translate` appears in diagnosis output: translation fallback was used; Chinese output is draft-quality only. Enable a real translation backend and rerun.
 - `policy_needs_manual_check=true`: dynamic policy resolve failed and local fallback was used.
 - `citation_graph_warning:semantic_scholar_status_429`: Semantic Scholar request was rate-limited; configure `SEMANTIC_SCHOLAR_API_KEY`.
 
@@ -247,3 +285,5 @@ python -m agent_paper_reviewers.cli submit-feedback --input output/<paper_title>
 feedback/<venue>/<year>/
 ```
 Future runs for the same venue/year automatically load these signals to calibrate risk scoring.
+
+

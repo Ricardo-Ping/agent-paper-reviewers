@@ -99,3 +99,54 @@ def test_orchestrator_emits_historical_profile_artifact(tmp_path: Path, monkeypa
     assert (run_dir / "historical_profile.json").exists()
     assert (run_dir / "artifacts" / "historical_profile_prior.json").exists()
     assert "Historical Weakness Profile" in (run_dir / "decision_brief.en.md").read_text(encoding="utf-8-sig")
+
+
+def test_historical_profile_run_weaknesses_respect_feedback_weight(tmp_path: Path) -> None:
+    payload = {
+        "paper": {"format": "md", "path": str(tmp_path / "paper.md")},
+        "venue": {"name": "ICLR", "year": 2026},
+        "claims": ["c1"],
+        "profile": {"author_id": "student-c"},
+    }
+    (tmp_path / "paper.md").write_text("# T\n\n## Experiments\nE\n", encoding="utf-8")
+    review_input = ReviewRunInput.model_validate(payload)
+
+    risk_ranking = {
+        "scores": {"novelty": 6.0, "soundness": 5.5, "experiment": 5.2, "clarity": 7.0, "overall": 5.9},
+        "risks": [
+            {
+                "id": "R1",
+                "severity": "P1",
+                "reason": "Statistical significance evidence appears missing.",
+                "feedback_adjustment": {
+                    "action": "down",
+                    "calibration_confidence": 0.9,
+                },
+            },
+            {
+                "id": "R2",
+                "severity": "P1",
+                "reason": "Baseline comparisons are not strong enough.",
+            },
+        ],
+    }
+
+    snap = update_historical_profiles(
+        tmp_path,
+        run_id="run-weighted-1",
+        input_data=review_input,
+        risk_ranking=risk_ranking,
+        gaps={"gaps": []},
+        alignments={"alignments": []},
+    )
+
+    run_weaknesses = snap.get("run_weaknesses", [])
+    by_name = {str(x.get("name", "")): x for x in run_weaknesses if isinstance(x, dict)}
+    assert "statistical_significance" in by_name
+    assert "baseline_coverage" in by_name
+    assert float(by_name["statistical_significance"].get("weighted_count", 0.0)) < float(
+        by_name["statistical_significance"].get("count", 0)
+    )
+    assert float(by_name["baseline_coverage"].get("weighted_count", 0.0)) >= float(
+        by_name["baseline_coverage"].get("count", 0)
+    )

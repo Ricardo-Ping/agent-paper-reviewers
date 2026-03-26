@@ -61,6 +61,7 @@ def test_risk_ranker_applies_feedback_adjustment(tmp_path: Path) -> None:
                 "reason": reason,
                 "likely_reject_phrase": phrase,
                 "verdict": "incorrect",
+                "confidence": 0.95,
                 "comment": "False positive in my setting.",
             },
             {
@@ -69,6 +70,7 @@ def test_risk_ranker_applies_feedback_adjustment(tmp_path: Path) -> None:
                 "reason": reason,
                 "likely_reject_phrase": phrase,
                 "verdict": "incorrect",
+                "confidence": 0.9,
                 "comment": "Repeated mismatch.",
             },
         ],
@@ -103,10 +105,15 @@ def test_risk_ranker_applies_feedback_adjustment(tmp_path: Path) -> None:
 
     ranking = ctx.artifacts["risk_ranking"]
     risk = ranking["risks"][0]
-    assert risk["score"] == 0.62
+    assert float(risk["score"]) < 0.70
+    assert float(risk["score"]) > 0.50
     assert risk["severity"] == "P1"
     assert ranking["feedback_loop"]["matched_risks"] == 1
     assert ranking["feedback_loop"]["scores_recomputed"] is True
+    adjustment = risk.get("feedback_adjustment", {})
+    assert adjustment.get("action") == "down"
+    assert float(adjustment.get("weighted_incorrect", 0.0)) > float(adjustment.get("weighted_correct", 0.0))
+    assert float(adjustment.get("calibration_confidence", 0.0)) > 0.0
     assert (ctx.run_dir / "artifacts" / "feedback_profile.json").exists()
 
 

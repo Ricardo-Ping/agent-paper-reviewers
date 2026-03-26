@@ -91,23 +91,47 @@ def recommend_venues(
             venue_slug=venue_slug,
             profile_source=source,
             readiness=readiness,
+            readiness_strict=check_eval["readiness_strict"],
+            readiness_weighted=check_eval["readiness_weighted"],
             topic_overlap=topic_overlap,
             passed_checks=check_eval["passed_checks"],
             failed_checks=check_eval["failed_checks"],
+            check_details=check_eval["check_details"],
             used_fallback=used_fallback,
         )
+        required_check_mapping = [
+            {
+                "check_name": row.get("check_name"),
+                "description": row.get("description", ""),
+                "severity_hint": row.get("severity_hint", "P2"),
+                "keywords": row.get("keywords", []),
+                "thresholds": row.get("thresholds", {}),
+            }
+            for row in check_eval["check_details"]
+        ]
         ranked.append(
             {
                 "venue": venue_slug,
                 "year": target_year,
                 "match_score": round(final_score, 3),
                 "readiness_score": round(readiness, 3),
+                "rule_readiness": {
+                    "score": round(readiness, 3),
+                    "strict_pass_ratio": round(check_eval["readiness_strict"], 3),
+                    "weighted_coverage": round(check_eval["readiness_weighted"], 3),
+                    "formula": check_eval["readiness_formula"],
+                    "total_required_checks": check_eval["total_checks"],
+                    "passed_checks_count": len(check_eval["passed_checks"]),
+                    "failed_checks_count": len(check_eval["failed_checks"]),
+                },
                 "topic_overlap_score": round(topic_overlap, 3),
                 "system_bias_score": round(system_bias, 3),
                 "weights": profile.weights,
                 "reasons": reasons,
                 "passed_checks": check_eval["passed_checks"][:6],
                 "failed_checks": check_eval["failed_checks"][:6],
+                "check_diagnostics": check_eval["check_details"][:12],
+                "required_check_mapping": required_check_mapping[:12],
                 "profile_source": source,
             }
         )
@@ -174,6 +198,9 @@ def _evaluate_checks(
     passed: list[str] = []
     failed: list[str] = []
     total = len(required_checks) if required_checks else 1
+    check_details: list[dict[str, Any]] = []
+    weighted_sum = 0.0
+    weight_total = 0.0
 
     for check in required_checks:
         spec = required_specs.get(check, {})
@@ -183,27 +210,77 @@ def _evaluate_checks(
         keywords = [str(k).strip().lower() for k in keywords if str(k).strip()]
         min_hits = int(spec.get("min_hits", 1) or 1)
         min_sections = int(spec.get("min_distinct_sections", 0) or 0)
+        severity_hint = str(spec.get("severity_hint", "P2") or "P2").upper()
+        description = str(spec.get("description", "")).strip()
 
-        hits = 0
+        hit_keywords: list[str] = []
         hit_sections: set[str] = set()
+        section_hits_by_keyword: dict[str, list[str]] = {}
         for kw in keywords:
+            kw_hit = False
             if kw and kw in corpus_lower:
-                hits += 1
+                kw_hit = True
+            matched_sections: list[str] = []
             for section, text in section_texts.items():
                 if kw and kw in text:
                     hit_sections.add(section)
+                    matched_sections.append(section)
+                    kw_hit = True
+            if kw_hit:
+                hit_keywords.append(kw)
+            if matched_sections:
+                section_hits_by_keyword[kw] = sorted(set(matched_sections))
 
-        is_passed = hits >= min_hits and len(hit_sections) >= min_sections
+        hits = len(set(hit_keywords))
+        is_passed = hits >= max(1, min_hits) and len(hit_sections) >= max(0, min_sections)
+        coverage_score = _check_coverage_score(
+            keyword_hits=hits,
+            keyword_total=len(keywords),
+            min_hits=max(1, min_hits),
+            section_hit_count=len(hit_sections),
+            min_sections=max(0, min_sections),
+        )
+        weight = _severity_weight(severity_hint)
+        weighted_sum += weight * coverage_score
+        weight_total += weight
+
+        missing_keywords = [kw for kw in keywords if kw not in set(hit_keywords)]
+        detail = {
+            "check_name": check,
+            "passed": is_passed,
+            "coverage_score": round(coverage_score, 3),
+            "severity_hint": severity_hint,
+            "description": description or _humanize_check_name(check),
+            "keywords": keywords,
+            "hit_keywords": sorted(set(hit_keywords)),
+            "missing_keywords": missing_keywords[:8],
+            "hit_count": hits,
+            "section_hit_count": len(hit_sections),
+            "section_hits": sorted(hit_sections),
+            "section_hits_by_keyword": section_hits_by_keyword,
+            "thresholds": {
+                "min_hits": max(1, min_hits),
+                "min_distinct_sections": max(0, min_sections),
+            },
+        }
+        check_details.append(detail)
         if is_passed:
             passed.append(check)
         else:
             failed.append(check)
 
-    readiness = len(passed) / max(total, 1)
+    readiness_strict = len(passed) / max(total, 1)
+    readiness_weighted = weighted_sum / max(weight_total, 1.0)
+    readiness = 0.55 * readiness_strict + 0.45 * readiness_weighted
     return {
         "readiness_score": readiness,
+        "readiness_strict": readiness_strict,
+        "readiness_weighted": readiness_weighted,
+        "readiness_formula": "0.55*strict_pass_ratio + 0.45*weighted_check_coverage",
+        "total_checks": len(required_checks),
         "passed_checks": passed,
         "failed_checks": failed,
+        "check_details": check_details,
     }
 
 
@@ -271,24 +348,104 @@ def _build_reasons(
     venue_slug: str,
     profile_source: str,
     readiness: float,
+    readiness_strict: float,
+    readiness_weighted: float,
     topic_overlap: float,
     passed_checks: list[str],
     failed_checks: list[str],
+    check_details: list[dict[str, Any]],
     used_fallback: bool,
 ) -> list[str]:
+    total = len(passed_checks) + len(failed_checks)
+    detail_by_name = {
+        str(row.get("check_name", "")): row
+        for row in check_details
+        if isinstance(row, dict)
+    }
+    passed_detail = [
+        detail_by_name[name]
+        for name in passed_checks
+        if name in detail_by_name
+    ]
+    failed_detail = [
+        detail_by_name[name]
+        for name in failed_checks
+        if name in detail_by_name
+    ]
+    passed_detail.sort(key=lambda x: float(x.get("coverage_score", 0.0)), reverse=True)
+    failed_detail.sort(key=lambda x: float(x.get("coverage_score", 0.0)))
+
     reasons = [
         (
             f"Rule readiness for {venue_slug.upper()} is {readiness:.2f} "
-            f"({len(passed_checks)}/{len(passed_checks) + len(failed_checks)} checks passed)."
+            f"(strict={readiness_strict:.2f}, weighted={readiness_weighted:.2f}; "
+            f"{len(passed_checks)}/{max(total,1)} checks passed)."
         ),
         f"Topic overlap between paper and {venue_slug.upper()} rule language is {topic_overlap:.2f}.",
     ]
-    if passed_checks:
-        reasons.append("Strong signals: " + ", ".join(passed_checks[:3]))
-    if failed_checks:
-        reasons.append("Main gaps to fix for this venue: " + ", ".join(failed_checks[:3]))
+    if passed_detail:
+        signals: list[str] = []
+        for row in passed_detail[:3]:
+            signals.append(
+                f"{row.get('check_name')} (coverage={float(row.get('coverage_score', 0.0)):.2f})"
+            )
+        reasons.append("Strong aligned checks: " + ", ".join(signals))
+    if failed_detail:
+        gaps: list[str] = []
+        for row in failed_detail[:3]:
+            missing = row.get("missing_keywords", [])
+            missing_text = ""
+            if isinstance(missing, list) and missing:
+                missing_text = f"; missing keywords: {', '.join(str(x) for x in missing[:2])}"
+            gaps.append(
+                f"{row.get('check_name')} (hits={row.get('hit_count',0)}/{row.get('thresholds',{}).get('min_hits',1)}, "
+                f"sections={row.get('section_hit_count',0)}/{row.get('thresholds',{}).get('min_distinct_sections',0)}"
+                f"{missing_text})"
+            )
+        reasons.append("Main venue-specific gaps: " + "; ".join(gaps))
+        first_desc = str(failed_detail[0].get("description", "")).strip()
+        if first_desc:
+            reasons.append(f"Most critical gap meaning: {first_desc}")
     if used_fallback:
         reasons.append("This recommendation uses fallback-year venue profile (not exact current-year snapshot).")
     if profile_source:
         reasons.append(f"Profile source: {profile_source}.")
     return reasons
+
+
+def _severity_weight(severity_hint: str) -> float:
+    s = str(severity_hint or "").upper()
+    if s == "P0":
+        return 3.0
+    if s == "P1":
+        return 2.0
+    return 1.0
+
+
+def _check_coverage_score(
+    *,
+    keyword_hits: int,
+    keyword_total: int,
+    min_hits: int,
+    section_hit_count: int,
+    min_sections: int,
+) -> float:
+    hit_ratio = min(1.0, float(keyword_hits) / max(1.0, float(min_hits)))
+    lexical_coverage = (
+        min(1.0, float(keyword_hits) / float(keyword_total))
+        if keyword_total > 0
+        else 1.0
+    )
+    section_ratio = (
+        min(1.0, float(section_hit_count) / max(1.0, float(min_sections)))
+        if min_sections > 0
+        else 1.0
+    )
+    return max(0.0, min(1.0, 0.65 * hit_ratio + 0.20 * lexical_coverage + 0.15 * section_ratio))
+
+
+def _humanize_check_name(check_name: str) -> str:
+    text = str(check_name or "").strip().replace("_", " ")
+    if not text:
+        return "required check"
+    return text[0].upper() + text[1:]

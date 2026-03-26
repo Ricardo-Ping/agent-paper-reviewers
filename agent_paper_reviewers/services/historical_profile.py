@@ -126,6 +126,7 @@ def _extract_run_metrics(risk_ranking: dict, gaps: dict | None, alignments: dict
 
     gap_code_counts: dict[str, int] = {}
     weakness_counts: dict[str, int] = {}
+    weakness_weighted_counts: dict[str, float] = {}
 
     for row in gap_rows:
         if not isinstance(row, dict):
@@ -136,6 +137,10 @@ def _extract_run_metrics(risk_ranking: dict, gaps: dict | None, alignments: dict
         gap_code_counts[code] = int(gap_code_counts.get(code, 0)) + 1
         weakness = _weakness_from_gap_code(code)
         weakness_counts[weakness] = int(weakness_counts.get(weakness, 0)) + 1
+        weakness_weighted_counts[weakness] = round(
+            float(weakness_weighted_counts.get(weakness, 0.0) or 0.0) + 1.0,
+            6,
+        )
 
     for row in risks:
         if not isinstance(row, dict):
@@ -145,6 +150,11 @@ def _extract_run_metrics(risk_ranking: dict, gaps: dict | None, alignments: dict
         if not weakness:
             continue
         weakness_counts[weakness] = int(weakness_counts.get(weakness, 0)) + 1
+        weakness_weighted_counts[weakness] = round(
+            float(weakness_weighted_counts.get(weakness, 0.0) or 0.0)
+            + _feedback_weight_for_risk(row),
+            6,
+        )
 
     none_or_weak = sum(
         1
@@ -155,6 +165,10 @@ def _extract_run_metrics(risk_ranking: dict, gaps: dict | None, alignments: dict
         weakness_counts["claim_evidence_alignment"] = int(
             weakness_counts.get("claim_evidence_alignment", 0)
         ) + none_or_weak
+        weakness_weighted_counts["claim_evidence_alignment"] = round(
+            float(weakness_weighted_counts.get("claim_evidence_alignment", 0.0) or 0.0) + float(none_or_weak),
+            6,
+        )
 
     p0 = sum(1 for r in risks if str(r.get("severity", "")).upper() == "P0")
     p1 = sum(1 for r in risks if str(r.get("severity", "")).upper() == "P1")
@@ -168,8 +182,19 @@ def _extract_run_metrics(risk_ranking: dict, gaps: dict | None, alignments: dict
             axis_scores[axis] = 0.0
 
     run_weaknesses = [
-        {"name": name, "count": count}
-        for name, count in sorted(weakness_counts.items(), key=lambda x: (-x[1], x[0]))
+        {
+            "name": name,
+            "count": int(weakness_counts.get(name, 0) or 0),
+            "weighted_count": round(float(weakness_weighted_counts.get(name, 0.0) or 0.0), 3),
+        }
+        for name in sorted(
+            set(weakness_counts.keys()) | set(weakness_weighted_counts.keys()),
+            key=lambda key: (
+                -float(weakness_weighted_counts.get(key, 0.0) or 0.0),
+                -int(weakness_counts.get(key, 0) or 0),
+                key,
+            ),
+        )
     ]
 
     return {
@@ -179,6 +204,7 @@ def _extract_run_metrics(risk_ranking: dict, gaps: dict | None, alignments: dict
         "p2_count": p2,
         "gap_code_counts": gap_code_counts,
         "weakness_counts": weakness_counts,
+        "weakness_weighted_counts": {k: round(float(v or 0.0), 6) for k, v in weakness_weighted_counts.items()},
         "run_weaknesses": run_weaknesses,
     }
 
@@ -203,6 +229,10 @@ def _merge_profile_doc(
 
     gap_code_counts = _merge_counter(doc.get("gap_code_counts", {}), run_metrics.get("gap_code_counts", {}))
     weakness_counts = _merge_counter(doc.get("weakness_counts", {}), run_metrics.get("weakness_counts", {}))
+    weakness_weighted_counts = _merge_counter_float(
+        doc.get("weakness_weighted_counts", {}),
+        run_metrics.get("weakness_weighted_counts", {}),
+    )
 
     recent_runs = list(doc.get("recent_run_ids", [])) if isinstance(doc.get("recent_run_ids"), list) else []
     recent_runs.append(run_id)
@@ -221,6 +251,7 @@ def _merge_profile_doc(
         "p2_total": int(doc.get("p2_total", 0) or 0) + int(run_metrics.get("p2_count", 0) or 0),
         "gap_code_counts": gap_code_counts,
         "weakness_counts": weakness_counts,
+        "weakness_weighted_counts": weakness_weighted_counts,
         "recent_run_ids": recent_runs,
     }
 
@@ -243,6 +274,29 @@ def _merge_counter(base: object, delta: object) -> dict[str, int]:
                 continue
             try:
                 merged[key] = int(merged.get(key, 0)) + int(v or 0)
+            except (TypeError, ValueError):
+                continue
+    return merged
+
+
+def _merge_counter_float(base: object, delta: object) -> dict[str, float]:
+    merged: dict[str, float] = {}
+    if isinstance(base, dict):
+        for k, v in base.items():
+            key = str(k).strip()
+            if not key:
+                continue
+            try:
+                merged[key] = round(float(v or 0.0), 6)
+            except (TypeError, ValueError):
+                continue
+    if isinstance(delta, dict):
+        for k, v in delta.items():
+            key = str(k).strip()
+            if not key:
+                continue
+            try:
+                merged[key] = round(float(merged.get(key, 0.0)) + float(v or 0.0), 6)
             except (TypeError, ValueError):
                 continue
     return merged
@@ -283,13 +337,40 @@ def _profile_view(doc: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(doc, dict) or not doc:
         return None
     weakness_counts = doc.get("weakness_counts", {})
+    weakness_weighted_counts = doc.get("weakness_weighted_counts", {})
     top_weaknesses: list[dict[str, Any]] = []
-    if isinstance(weakness_counts, dict):
+    if isinstance(weakness_counts, dict) or isinstance(weakness_weighted_counts, dict):
+        names = set()
+        if isinstance(weakness_counts, dict):
+            names.update(str(k) for k in weakness_counts.keys())
+        if isinstance(weakness_weighted_counts, dict):
+            names.update(str(k) for k in weakness_weighted_counts.keys())
         top_weaknesses = [
-            {"name": name, "count": count}
-            for name, count in sorted(
-                ((str(k), int(v or 0)) for k, v in weakness_counts.items()),
-                key=lambda x: (-x[1], x[0]),
+            {
+                "name": name,
+                "count": int(weakness_counts.get(name, 0) or 0) if isinstance(weakness_counts, dict) else 0,
+                "weighted_count": round(
+                    float(weakness_weighted_counts.get(name, 0.0) or 0.0)
+                    if isinstance(weakness_weighted_counts, dict)
+                    else 0.0,
+                    3,
+                ),
+            }
+            for name in sorted(
+                (n for n in names if n),
+                key=lambda n: (
+                    -(
+                        float(weakness_weighted_counts.get(n, 0.0) or 0.0)
+                        if isinstance(weakness_weighted_counts, dict)
+                        else 0.0
+                    ),
+                    -(
+                        int(weakness_counts.get(n, 0) or 0)
+                        if isinstance(weakness_counts, dict)
+                        else 0
+                    ),
+                    n,
+                ),
             )[:5]
         ]
     return {
@@ -300,6 +381,25 @@ def _profile_view(doc: dict[str, Any] | None) -> dict[str, Any] | None:
         "p1_total": int(doc.get("p1_total", 0) or 0),
         "updated_at": doc.get("updated_at"),
     }
+
+
+def _feedback_weight_for_risk(risk: dict[str, Any]) -> float:
+    adjustment = risk.get("feedback_adjustment", {})
+    if not isinstance(adjustment, dict):
+        return 1.0
+    action = str(adjustment.get("action", "")).strip().lower()
+    try:
+        conf = float(adjustment.get("calibration_confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    conf = max(0.0, min(1.0, conf))
+    if action == "down":
+        # Historical feedback suggests this risk is often over-reported.
+        return round(max(0.45, 1.0 - 0.55 * conf), 6)
+    if action == "up":
+        # Historical feedback suggests this risk is often valid and under-weighted.
+        return round(min(1.45, 1.0 + 0.40 * conf), 6)
+    return 1.0
 
 
 def _build_alerts(author_profile: dict[str, Any] | None, venue_profile: dict[str, Any] | None) -> list[str]:

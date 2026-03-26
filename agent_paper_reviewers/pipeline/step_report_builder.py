@@ -141,6 +141,16 @@ class ReportBuilderStep(PipelineStep):
                 "diagnosis_md": self._diagnosis_md_zh(zh_diagnosis_json),
             }
 
+        student_pack_agent = self._generate_student_pack_with_executor(
+            ctx=ctx,
+            decision_json=decision_json,
+            diagnosis_json=diagnosis_json,
+            rebuttal_bundle_en=ctx.artifacts.get("rebuttal", {}).get("en", {}).get("bundle", {}),
+        )
+        if isinstance(student_pack_agent, dict):
+            ctx.artifacts["student_pack_agent"] = student_pack_agent
+            ctx.dump_json("artifacts/student_pack_agent.json", student_pack_agent)
+
         ctx.artifacts["reports"] = payload
         ctx.dump_json("artifacts/report.decision.en.json", decision_json)
         ctx.dump_json("artifacts/report.full.en.json", full_json)
@@ -149,6 +159,77 @@ class ReportBuilderStep(PipelineStep):
             ctx.dump_json("artifacts/report.decision.zh.json", payload["zh"]["decision_json"])
             ctx.dump_json("artifacts/report.full.zh.json", payload["zh"]["full_json"])
             ctx.dump_json("artifacts/report.diagnosis.zh.json", payload["zh"]["diagnosis_json"])
+
+    def _generate_student_pack_with_executor(
+        self,
+        *,
+        ctx: PipelineContext,
+        decision_json: dict,
+        diagnosis_json: dict,
+        rebuttal_bundle_en: dict,
+    ) -> dict | None:
+        if self.executor is None:
+            return None
+
+        spec = TaskSpec(
+            task_type="student_pack_generate",
+            prompt=(
+                "Generate exactly three student-facing markdown files for pre-submission action. "
+                "Keep language concrete, avoid JSON jargon, and map each issue to direct actions."
+            ),
+            context={
+                "venue": ctx.input_data.venue.name,
+                "year": ctx.input_data.venue.year,
+                "language_mode": ctx.input_data.options.language_mode.value,
+                "decision_json": decision_json,
+                "diagnosis_json": diagnosis_json,
+                "rebuttal_bundle_en": rebuttal_bundle_en if isinstance(rebuttal_bundle_en, dict) else {},
+            },
+            output_schema={
+                "en": {"001": "markdown", "002": "markdown", "003": "markdown"},
+                "zh": {"001": "markdown", "002": "markdown", "003": "markdown"},
+            },
+            model_profile="judge",
+        )
+        result = self.executor.execute(spec)
+        for warning in result.warnings:
+            if "api_key_missing_use_fallback" in warning:
+                continue
+            ctx.add_qa_issue(f"report_builder_student_pack_warning:{warning}")
+        if not result.ok:
+            return None
+
+        payload = result.output
+        if isinstance(payload, dict) and isinstance(payload.get("response"), dict):
+            payload = payload.get("response")
+        if not isinstance(payload, dict):
+            return None
+
+        def _norm_lang(lang_key: str) -> dict | None:
+            obj = payload.get(lang_key)
+            if not isinstance(obj, dict):
+                return None
+            out: dict[str, str] = {}
+            for key in ("001", "002", "003"):
+                text = str(obj.get(key, "")).strip()
+                if not text:
+                    return None
+                out[key] = text
+            return out
+
+        en = _norm_lang("en")
+        if en is None:
+            return None
+        out = {"en": en}
+
+        if ctx.input_data.options.language_mode.value == "en_zh":
+            zh = _norm_lang("zh")
+            if zh is None:
+                # Keep run stable even if zh generation fails.
+                ctx.add_qa_issue("report_builder_student_pack_warning:missing_zh_use_fallback")
+            else:
+                out["zh"] = zh
+        return out
 
     @staticmethod
     def _decision(
@@ -423,6 +504,9 @@ class ReportBuilderStep(PipelineStep):
                 why = str(row.get("why_this_will_be_asked", "")).strip()
                 if why:
                     lines.append(f"  - Why: {why}")
+                anchor_hint = ReportBuilderStep._question_anchor_hint(row)
+                if anchor_hint:
+                    lines.append(f"  - Anchors: {anchor_hint}")
 
         return "\n".join(lines).strip() + "\n"
 
@@ -499,6 +583,12 @@ class ReportBuilderStep(PipelineStep):
             sections = diagnostics.get("selected_sections", []) if isinstance(diagnostics, dict) else []
             avg_quality = diagnostics.get("avg_quality", 0.0) if isinstance(diagnostics, dict) else 0.0
             section_text = ", ".join(str(x) for x in sections[:3]) if isinstance(sections, list) else ""
+            refs = row.get("evidence_refs", []) if isinstance(row.get("evidence_refs", []), list) else []
+            top_anchor = ""
+            if refs:
+                first_ref = refs[0]
+                if isinstance(first_ref, dict):
+                    top_anchor = ReportBuilderStep._anchor_brief(first_ref)
             contradiction = float(row.get("contradiction_score", 0.0) or 0.0)
             contradiction_flag = "yes" if bool(row.get("contradiction_detected")) else "no"
             contradiction_refs = row.get("contradictory_evidence_refs", [])
@@ -506,10 +596,15 @@ class ReportBuilderStep(PipelineStep):
             if isinstance(contradiction_refs, list) and contradiction_refs:
                 first = contradiction_refs[0]
                 if isinstance(first, dict):
-                    contradiction_anchor = f"{first.get('section', '')}/{first.get('passage_id', '')}".strip("/")
+                    contradiction_anchor = ReportBuilderStep._anchor_brief(first)
+            confidence_text = ReportBuilderStep._evidence_confidence_brief(
+                row.get("evidence_confidence", {})
+            )
             lines.append(
                 f"- {row['claim_id']} [{row['strength']}] score={row['score']} -> {len(row['evidence_refs'])} evidence refs; "
                 f"anchors={section_text or 'n/a'}; avg_quality={avg_quality}; "
+                f"top_anchor={top_anchor or 'n/a'}; "
+                f"evidence_confidence={confidence_text or 'n/a'}; "
                 f"contradiction={contradiction_flag} ({contradiction}); "
                 f"contradiction_anchor={contradiction_anchor or 'n/a'}"
             )
@@ -566,9 +661,12 @@ class ReportBuilderStep(PipelineStep):
             for row in rows[:8]:
                 if not isinstance(row, dict):
                     continue
+                persona = ReportBuilderStep._persona_display_en(
+                    str(row.get("reviewer_persona", "empirical"))
+                )
                 lines.append(
                     f"- [{row.get('priority', 'medium')}] {row.get('question', '')} "
-                    f"(persona={row.get('reviewer_persona', 'empirical')})"
+                    f"(persona={persona})"
                 )
                 why = str(row.get("why_this_will_be_asked", "")).strip()
                 if why:
@@ -576,6 +674,9 @@ class ReportBuilderStep(PipelineStep):
                 evid = row.get("evidence_to_prepare", [])
                 if isinstance(evid, list) and evid:
                     lines.append(f"  - Evidence to prepare: {evid[0]}")
+                anchor_hint = ReportBuilderStep._question_anchor_hint(row)
+                if anchor_hint:
+                    lines.append(f"  - Anchors: {anchor_hint}")
 
         return "\n".join(lines).strip() + "\n"
 
@@ -632,9 +733,34 @@ class ReportBuilderStep(PipelineStep):
             year = int(row.get("year", 0) or 0)
             score = row.get("match_score", 0)
             lines.append(f"- {venue} {year}: match={score}")
+            rule_readiness = row.get("rule_readiness", {})
+            if isinstance(rule_readiness, dict) and rule_readiness:
+                lines.append(
+                    "  - "
+                    + f"Rule readiness: score={rule_readiness.get('score')}, "
+                    + f"strict={rule_readiness.get('strict_pass_ratio')}, "
+                    + f"weighted={rule_readiness.get('weighted_coverage')} "
+                    + f"({rule_readiness.get('passed_checks_count', 0)}/{rule_readiness.get('total_required_checks', 0)} passed)"
+                )
             reasons = row.get("reasons", [])
             if isinstance(reasons, list):
-                for reason in reasons[:2]:
+                selected: list[str] = []
+                priority_keys = [
+                    "Main venue-specific gaps",
+                    "Strong aligned checks",
+                    "Most critical gap meaning",
+                    "Topic overlap",
+                ]
+                for key in priority_keys:
+                    for reason in reasons:
+                        if not isinstance(reason, str):
+                            continue
+                        if key.lower() in reason.lower() and reason not in selected:
+                            selected.append(reason)
+                            break
+                if not selected:
+                    selected = [str(r) for r in reasons if isinstance(r, str)]
+                for reason in selected[:4]:
                     lines.append(f"  - {reason}")
         return lines
 
@@ -831,9 +957,19 @@ class ReportBuilderStep(PipelineStep):
             year = int(row.get("year", 0) or 0)
             score = row.get("match_score", 0)
             lines.append(f"- {venue} {year}：匹配度={score}")
+            rule_readiness = row.get("rule_readiness", {})
+            if isinstance(rule_readiness, dict) and rule_readiness:
+                lines.append(
+                    "  - "
+                    + f"规则就绪度：score={rule_readiness.get('score')}，"
+                    + f"strict={rule_readiness.get('strict_pass_ratio')}，"
+                    + f"weighted={rule_readiness.get('weighted_coverage')} "
+                    + f"（通过 {rule_readiness.get('passed_checks_count', 0)}/{rule_readiness.get('total_required_checks', 0)}）"
+                )
             reasons = row.get("reasons", [])
             if isinstance(reasons, list):
-                for reason in reasons[:2]:
+                selected = [str(r) for r in reasons if isinstance(r, str)]
+                for reason in selected[:4]:
                     lines.append(f"  - {reason}")
         return lines
 
@@ -1173,6 +1309,29 @@ class ReportBuilderStep(PipelineStep):
         risks = full_json.get("all_risks", [])
         remediation = full_json.get("remediation_tasks", [])
         rebuttal_items = full_json.get("rebuttal", {}).get("items", [])
+        alignments = full_json.get("claim_evidence_matrix", [])
+        reviewer_questions = (
+            full_json.get("reviewer_question_simulation", {}).get("questions", [])
+            if isinstance(full_json.get("reviewer_question_simulation", {}), dict)
+            else []
+        )
+        gaps_payload = ctx.artifacts.get("gaps", {})
+        required_check_outcomes = (
+            gaps_payload.get("required_check_outcomes", [])
+            if isinstance(gaps_payload, dict)
+            else []
+        )
+        paper_structured = ctx.artifacts.get("paper_structured", {})
+        parse_quality = (
+            paper_structured.get("parse_quality", {})
+            if isinstance(paper_structured, dict)
+            else {}
+        )
+        parse_warnings = (
+            paper_structured.get("warnings", [])
+            if isinstance(paper_structured, dict)
+            else []
+        )
 
         tasks_by_risk: dict[str, list[dict]] = {}
         for task in remediation:
@@ -1184,6 +1343,9 @@ class ReportBuilderStep(PipelineStep):
             tasks_by_risk.setdefault(risk_id, []).append(task)
 
         diagnosis_items: list[dict] = []
+        executor_items = 0
+        executor_fallback_items = 0
+        fallback_items = 0
         for idx, risk in enumerate(risks, start=1):
             if not isinstance(risk, dict):
                 continue
@@ -1192,43 +1354,107 @@ class ReportBuilderStep(PipelineStep):
             severity = str(risk.get("severity") or "P2")
             linked_tasks = tasks_by_risk.get(risk_id, [])
             linked_rebuttal = rebuttal_items[idx - 1] if idx - 1 < len(rebuttal_items) else {}
+            related_claims = self._related_claims_for_risk(risk, alignments)
+            evidence_anchors = self._evidence_bundle_for_risk(risk, related_claims)
+            check_trace = self._check_trace_for_risk(risk, required_check_outcomes)
+            linked_questions = self._linked_questions_for_risk(
+                risk_id=risk_id,
+                reason=reason,
+                reviewer_questions=reviewer_questions,
+            )
 
             why_happened = self._default_why_happened(reason, severity)
             why_it_matters = self._default_why_it_matters(reason, severity)
             fix_plan = self._default_fix_plan(linked_tasks, risk)
+            fix_actions = self._default_fix_actions(
+                risk=risk,
+                linked_tasks=linked_tasks,
+                related_claims=related_claims,
+                check_trace=check_trace,
+            )
+            expected_impact = self._default_expected_impact(risk, fix_actions)
 
             enriched = self._diagnosis_explain_with_executor(
                 ctx,
                 risk=risk,
+                related_claims=related_claims,
+                evidence_anchors=evidence_anchors,
+                check_trace=check_trace,
+                reviewer_followups=linked_questions,
                 why_happened=why_happened,
                 why_it_matters=why_it_matters,
                 fix_plan=fix_plan,
+                fix_actions=fix_actions,
+                expected_impact=expected_impact,
             )
+            generation_source = "rule_fallback"
+            confidence = 0.62
             if enriched is not None:
-                why_happened = str(enriched.get("why_happened") or why_happened).strip()
-                why_it_matters = str(enriched.get("why_it_matters") or why_it_matters).strip()
-                fix_plan = str(enriched.get("fix_plan") or fix_plan).strip()
+                executor_items += 1
+                generation_source = "executor"
+                generator = str(enriched.get("generator", "")).strip().lower()
+                if "deterministic" in generator:
+                    generation_source = "executor_fallback"
+                    executor_fallback_items += 1
+                why_happened = str(
+                    enriched.get("root_cause_analysis")
+                    or enriched.get("why_happened")
+                    or why_happened
+                ).strip()
+                why_it_matters = str(
+                    enriched.get("impact_analysis")
+                    or enriched.get("why_it_matters")
+                    or why_it_matters
+                ).strip()
+                fix_plan = str(enriched.get("fix_summary") or enriched.get("fix_plan") or fix_plan).strip()
+                expected_impact = str(enriched.get("expected_impact") or expected_impact).strip()
+                confidence = float(enriched.get("confidence", confidence) or confidence)
+                if isinstance(enriched.get("fix_actions"), list) and enriched.get("fix_actions"):
+                    fix_actions = [
+                        x for x in enriched.get("fix_actions", [])
+                        if isinstance(x, dict)
+                    ][:4]
+                if isinstance(enriched.get("reviewer_followups"), list) and enriched.get("reviewer_followups"):
+                    linked_questions = [
+                        str(x).strip()
+                        for x in enriched.get("reviewer_followups", [])
+                        if str(x).strip()
+                    ][:4]
+            else:
+                fallback_items += 1
 
-            evidence_refs = risk.get("evidence_refs", [])
             top_anchor = ""
-            if isinstance(evidence_refs, list) and evidence_refs:
-                top = evidence_refs[0] if isinstance(evidence_refs[0], dict) else {}
-                section = str(top.get("section") or "unknown")
-                passage_id = str(top.get("passage_id") or "unknown")
-                excerpt = str(top.get("excerpt") or "").strip()
-                top_anchor = f"{section}/{passage_id}: {excerpt}"[:260]
+            if evidence_anchors:
+                first = evidence_anchors[0]
+                top_anchor = (
+                    f"{first.get('section', 'unknown')}/{first.get('passage_id', 'unknown')}: "
+                    f"{first.get('excerpt', '')}"
+                )[:320]
 
             diagnosis_items.append(
                 {
                     "issue_id": risk_id,
                     "severity": severity,
                     "issue": reason,
-                    "why_happened": why_happened,
-                    "why_it_matters": why_it_matters,
-                    "suggested_fix": fix_plan,
+                    "problem_statement": reason,
+                    "root_cause_analysis": why_happened,
+                    "impact_analysis": why_it_matters,
+                    "fix_summary": fix_plan,
+                    "fix_actions": fix_actions,
+                    "expected_impact": expected_impact,
+                    "reviewer_followups": linked_questions,
+                    "related_claims": related_claims,
+                    "check_trace": check_trace,
+                    "evidence_anchors": evidence_anchors,
                     "linked_rebuttal_review_id": str(linked_rebuttal.get("review_id") or f"R{idx}"),
                     "linked_rebuttal_concern": str(linked_rebuttal.get("concern") or reason),
                     "evidence_anchor": top_anchor,
+                    "generation_source": generation_source,
+                    "confidence": round(max(0.0, min(1.0, confidence)), 3),
+                    # backward-compatible aliases
+                    "why_happened": why_happened,
+                    "why_it_matters": why_it_matters,
+                    "suggested_fix": fix_plan,
                 }
             )
 
@@ -1238,6 +1464,16 @@ class ReportBuilderStep(PipelineStep):
                 "risk_count": len(diagnosis_items),
                 "p0_count": sum(1 for x in diagnosis_items if x.get("severity") == "P0"),
                 "p1_count": sum(1 for x in diagnosis_items if x.get("severity") == "P1"),
+                "executor_items": executor_items,
+                "executor_fallback_items": executor_fallback_items,
+                "fallback_items": fallback_items,
+            },
+            "paper_parse_quality": {
+                "word_count": int(parse_quality.get("word_count", 0) or 0),
+                "section_count": int(parse_quality.get("section_count", 0) or 0),
+                "warnings": [str(x) for x in parse_warnings[:8]]
+                if isinstance(parse_warnings, list)
+                else [],
             },
             "items": diagnosis_items,
         }
@@ -1247,29 +1483,57 @@ class ReportBuilderStep(PipelineStep):
         ctx: PipelineContext,
         *,
         risk: dict,
+        related_claims: list[dict],
+        evidence_anchors: list[dict],
+        check_trace: dict,
+        reviewer_followups: list[str],
         why_happened: str,
         why_it_matters: str,
         fix_plan: str,
+        fix_actions: list[dict],
+        expected_impact: str,
     ) -> dict | None:
         if self.executor is None:
             return None
 
         spec = TaskSpec(
-            task_type="diagnosis_explain",
+            task_type="diagnosis_deep_dive",
             prompt=(
-                "Rewrite the diagnosis for graduate students. Keep it concrete, plain, and actionable. "
+                "You are a strict but practical paper-review coach for graduate students. "
+                "Analyze one rejection risk using paper evidence. Avoid template language. "
                 "Return JSON only."
             ),
             context={
                 "risk": risk,
-                "why_happened": why_happened,
-                "why_it_matters": why_it_matters,
-                "suggested_fix": fix_plan,
+                "related_claims": related_claims[:4],
+                "evidence_anchors": evidence_anchors[:6],
+                "required_check_trace": check_trace,
+                "reviewer_followups": reviewer_followups[:4],
+                "fallback": {
+                    "root_cause_analysis": why_happened,
+                    "impact_analysis": why_it_matters,
+                    "fix_summary": fix_plan,
+                    "fix_actions": fix_actions[:4],
+                    "expected_impact": expected_impact,
+                },
             },
             output_schema={
-                "why_happened": "string",
-                "why_it_matters": "string",
-                "fix_plan": "string",
+                "problem_statement": "string",
+                "root_cause_analysis": "string",
+                "impact_analysis": "string",
+                "fix_summary": "string",
+                "fix_actions": [
+                    {
+                        "action": "string",
+                        "why": "string",
+                        "expected_gain": "string",
+                        "section_target": "string",
+                        "effort": "S|M|L",
+                    }
+                ],
+                "expected_impact": "string",
+                "reviewer_followups": ["string"],
+                "confidence": 0.0,
             },
             model_profile="judge",
         )
@@ -1284,7 +1548,501 @@ class ReportBuilderStep(PipelineStep):
             payload = payload["response"]
         if not isinstance(payload, dict):
             return None
+
+        root = str(payload.get("root_cause_analysis") or payload.get("why_happened") or "").strip()
+        impact = str(payload.get("impact_analysis") or payload.get("why_it_matters") or "").strip()
+        if len(root) < 24 or len(impact) < 24:
+            return None
         return payload
+
+    @staticmethod
+    def _related_claims_for_risk(risk: dict, alignments: object) -> list[dict]:
+        if not isinstance(alignments, list) or not alignments:
+            return []
+
+        risk_refs = risk.get("evidence_refs", [])
+        risk_ref_ids = {
+            str(ref.get("passage_id", "")).strip()
+            for ref in risk_refs
+            if isinstance(ref, dict)
+        }
+        reason = str(risk.get("reason", "")).lower()
+        wanted_types = {"novelty"}
+        if "baseline" in reason:
+            wanted_types.add("baseline")
+        if "significance" in reason or "statistical" in reason:
+            wanted_types.add("statistical")
+        if "ablation" in reason:
+            wanted_types.add("ablation")
+        if "reproduc" in reason:
+            wanted_types.add("reproducibility")
+
+        picked: list[dict] = []
+        for row in alignments:
+            if not isinstance(row, dict):
+                continue
+            score = float(row.get("score", 0.0) or 0.0)
+            claim_type = str(row.get("claim_type", "novelty")).lower()
+            refs = row.get("evidence_refs", [])
+            if not isinstance(refs, list):
+                refs = []
+            row_ref_ids = {
+                str(ref.get("passage_id", "")).strip()
+                for ref in refs
+                if isinstance(ref, dict)
+            }
+            overlap = bool(risk_ref_ids and row_ref_ids.intersection(risk_ref_ids))
+            contradiction = float(row.get("contradiction_score", 0.0) or 0.0)
+            if overlap or claim_type in wanted_types or contradiction >= 0.45:
+                picked.append(
+                    {
+                        "claim_id": str(row.get("claim_id", "")),
+                        "claim_type": claim_type,
+                        "claim_text": str(row.get("claim_text", "")),
+                        "strength": str(row.get("strength", "")),
+                        "score": round(score, 3),
+                        "contradiction_score": round(contradiction, 3),
+                        "contradiction_summary": str(row.get("contradiction_summary", "")),
+                        "evidence_refs": refs[:2],
+                        "contradictory_evidence_refs": (
+                            row.get("contradictory_evidence_refs", [])[:2]
+                            if isinstance(row.get("contradictory_evidence_refs", []), list)
+                            else []
+                        ),
+                    }
+                )
+
+        if not picked:
+            rows = [r for r in alignments if isinstance(r, dict)]
+            rows.sort(
+                key=lambda x: (
+                    float(x.get("score", 0.0) or 0.0),
+                    -float(x.get("contradiction_score", 0.0) or 0.0),
+                ),
+                reverse=True,
+            )
+            for row in rows[:2]:
+                picked.append(
+                    {
+                        "claim_id": str(row.get("claim_id", "")),
+                        "claim_type": str(row.get("claim_type", "novelty")),
+                        "claim_text": str(row.get("claim_text", "")),
+                        "strength": str(row.get("strength", "")),
+                        "score": round(float(row.get("score", 0.0) or 0.0), 3),
+                        "contradiction_score": round(float(row.get("contradiction_score", 0.0) or 0.0), 3),
+                        "contradiction_summary": str(row.get("contradiction_summary", "")),
+                        "evidence_refs": (
+                            row.get("evidence_refs", [])[:2]
+                            if isinstance(row.get("evidence_refs", []), list)
+                            else []
+                        ),
+                        "contradictory_evidence_refs": (
+                            row.get("contradictory_evidence_refs", [])[:2]
+                            if isinstance(row.get("contradictory_evidence_refs", []), list)
+                            else []
+                        ),
+                    }
+                )
+        return picked[:4]
+
+    @staticmethod
+    def _clean_excerpt(text: str, limit: int = 220) -> str:
+        clean = re.sub(r"\s+", " ", str(text or "")).strip()
+        clean = clean.replace("\u0000", "")
+        return clean[:limit]
+
+    @classmethod
+    def _evidence_bundle_for_risk(cls, risk: dict, related_claims: list[dict]) -> list[dict]:
+        out: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+
+        def _push(ref: dict, source: str) -> None:
+            section = str(ref.get("section", "")).strip() or "unknown"
+            passage_id = str(ref.get("passage_id", "")).strip() or "unknown"
+            key = (section, passage_id)
+            if key in seen:
+                return
+            seen.add(key)
+            out.append(
+                {
+                    "section": section,
+                    "passage_id": passage_id,
+                    "excerpt": cls._clean_excerpt(str(ref.get("excerpt", ""))),
+                    "source": source,
+                    "page": int(ref.get("page", 0) or 0),
+                    "kind": str(ref.get("kind", "")),
+                    "anchor_label": str(ref.get("anchor_label", "")),
+                    "anchor_type": str(ref.get("anchor_type", "")),
+                    "locator": ref.get("locator", {}) if isinstance(ref.get("locator", {}), dict) else {},
+                }
+            )
+
+        refs = risk.get("evidence_refs", [])
+        if isinstance(refs, list):
+            for ref in refs[:4]:
+                if isinstance(ref, dict):
+                    _push(ref, "risk")
+
+        for claim in related_claims:
+            if not isinstance(claim, dict):
+                continue
+            for ref in claim.get("evidence_refs", []):
+                if isinstance(ref, dict):
+                    _push(ref, f"claim:{claim.get('claim_id', '')}")
+            for ref in claim.get("contradictory_evidence_refs", []):
+                if isinstance(ref, dict):
+                    _push(ref, f"contradiction:{claim.get('claim_id', '')}")
+        return out[:8]
+
+    @staticmethod
+    def _anchor_brief(ref: dict) -> str:
+        section = str(ref.get("section", "unknown")).strip() or "unknown"
+        passage_id = str(ref.get("passage_id", "unknown")).strip() or "unknown"
+        base = f"{section}/{passage_id}".strip("/")
+
+        extras: list[str] = []
+        anchor_label = str(ref.get("anchor_label", "")).strip()
+        if anchor_label:
+            extras.append(anchor_label)
+        try:
+            page = int(ref.get("page", 0) or 0)
+        except (TypeError, ValueError):
+            page = 0
+        if page > 0:
+            extras.append(f"p.{page}")
+        locator = ref.get("locator", {})
+        if isinstance(locator, dict):
+            line_start = int(locator.get("line_start", 0) or 0)
+            line_end = int(locator.get("line_end", 0) or 0)
+            if line_start > 0:
+                if line_end > 0 and line_end != line_start:
+                    extras.append(f"L{line_start}-{line_end}")
+                else:
+                    extras.append(f"L{line_start}")
+            para_idx = int(locator.get("paragraph_index", -1) or -1)
+            if para_idx >= 0:
+                extras.append(f"para#{para_idx}")
+            table_idx = int(locator.get("table_index", 0) or 0)
+            if table_idx > 0:
+                extras.append(f"table#{table_idx}")
+        if extras:
+            return f"{base} [{', '.join(extras)}]"
+        return base
+
+    @staticmethod
+    def _question_anchor_hint(row: object) -> str:
+        if not isinstance(row, dict):
+            return ""
+        direct = str(row.get("evidence_anchor_hint", "")).strip()
+        if direct:
+            return direct
+        refs = row.get("evidence_anchor_refs", [])
+        if not isinstance(refs, list):
+            return ""
+        hints: list[str] = []
+        for ref in refs[:3]:
+            if not isinstance(ref, dict):
+                continue
+            section = str(ref.get("section", "")).strip()
+            passage_id = str(ref.get("passage_id", "")).strip()
+            if not section or not passage_id:
+                continue
+            hints.append(f"[see: {section} -> {passage_id}]")
+        return " ".join(hints)
+
+    @staticmethod
+    def _persona_display_en(slug: str) -> str:
+        mapping = {
+            "methodology_reviewer": "Methodology Reviewer",
+            "empirical_reviewer": "Empirical Reviewer",
+            "theory_reviewer": "Theory Reviewer",
+            "systems": "Systems Reviewer",
+            "method": "Method Reviewer",
+            "empirical": "Empirical Reviewer",
+            "reproducibility": "Reproducibility Reviewer",
+            "meta-review": "Meta Reviewer",
+            "critical": "Critical Reviewer",
+            "db-systems": "DB Systems Reviewer",
+            "related-work": "Related-Work Reviewer",
+        }
+        key = str(slug or "").strip().lower()
+        if key in mapping:
+            return mapping[key]
+        return key or "Empirical Reviewer"
+
+    @staticmethod
+    def _persona_display_zh(slug: str) -> str:
+        mapping = {
+            "methodology_reviewer": "方法论审稿人",
+            "empirical_reviewer": "实验审稿人",
+            "theory_reviewer": "理论审稿人",
+            "systems": "系统审稿人",
+            "method": "方法审稿人",
+            "empirical": "实验审稿人",
+            "reproducibility": "可复现性审稿人",
+            "meta-review": "Meta 审稿视角",
+            "critical": "严苛审稿视角",
+            "db-systems": "数据库系统审稿人",
+            "related-work": "相关工作审稿人",
+        }
+        key = str(slug or "").strip().lower()
+        if key in mapping:
+            return mapping[key]
+        return key or "实验审稿人"
+
+    @staticmethod
+    def _evidence_confidence_brief(payload: object) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        support = payload.get("support", {}) if isinstance(payload.get("support"), dict) else {}
+        contradiction = (
+            payload.get("contradiction", {})
+            if isinstance(payload.get("contradiction"), dict)
+            else {}
+        )
+        support_counts = support.get("counts", {}) if isinstance(support.get("counts"), dict) else {}
+        contradiction_counts = (
+            contradiction.get("counts", {})
+            if isinstance(contradiction.get("counts"), dict)
+            else {}
+        )
+
+        def _part(counts: dict, prefix: str) -> str:
+            s = int(counts.get("Strong", 0) or 0)
+            m = int(counts.get("Medium", 0) or 0)
+            w = int(counts.get("Weak", 0) or 0)
+            return f"{prefix}(S/M/W={s}/{m}/{w})"
+
+        chunks = []
+        if support_counts:
+            chunks.append(_part(support_counts, "support"))
+        if contradiction_counts:
+            chunks.append(_part(contradiction_counts, "conflict"))
+        if bool(payload.get("conflict_alert", False)):
+            chunks.append("conflict_alert=yes")
+        return "; ".join(chunks)
+
+    @staticmethod
+    def _evidence_confidence_brief_zh(payload: object) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        support = payload.get("support", {}) if isinstance(payload.get("support"), dict) else {}
+        contradiction = (
+            payload.get("contradiction", {})
+            if isinstance(payload.get("contradiction"), dict)
+            else {}
+        )
+        support_counts = support.get("counts", {}) if isinstance(support.get("counts"), dict) else {}
+        contradiction_counts = (
+            contradiction.get("counts", {})
+            if isinstance(contradiction.get("counts"), dict)
+            else {}
+        )
+
+        def _part(counts: dict, prefix: str) -> str:
+            s = int(counts.get("Strong", 0) or 0)
+            m = int(counts.get("Medium", 0) or 0)
+            w = int(counts.get("Weak", 0) or 0)
+            return f"{prefix}(强/中/弱={s}/{m}/{w})"
+
+        chunks = []
+        if support_counts:
+            chunks.append(_part(support_counts, "支持证据"))
+        if contradiction_counts:
+            chunks.append(_part(contradiction_counts, "冲突证据"))
+        if bool(payload.get("conflict_alert", False)):
+            chunks.append("冲突预警=是")
+        return "；".join(chunks)
+
+    @staticmethod
+    def _linked_questions_for_risk(
+        *,
+        risk_id: str,
+        reason: str,
+        reviewer_questions: object,
+    ) -> list[str]:
+        if not isinstance(reviewer_questions, list):
+            return []
+        reason_tokens = set(re.findall(r"[a-zA-Z]{4,}", reason.lower()))
+        out: list[str] = []
+        for row in reviewer_questions:
+            if not isinstance(row, dict):
+                continue
+            linked = row.get("linked_risk_ids", [])
+            question = str(row.get("question", "")).strip()
+            if not question:
+                continue
+            if isinstance(linked, list) and risk_id in {str(x) for x in linked}:
+                out.append(question)
+                continue
+            question_tokens = set(re.findall(r"[a-zA-Z]{4,}", question.lower()))
+            if reason_tokens and len(reason_tokens & question_tokens) >= 2:
+                out.append(question)
+
+        unique: list[str] = []
+        seen = set()
+        for question in out:
+            if question in seen:
+                continue
+            seen.add(question)
+            unique.append(question)
+        return unique[:4]
+
+    @staticmethod
+    def _check_trace_for_risk(risk: dict, required_check_outcomes: object) -> dict:
+        if not isinstance(required_check_outcomes, list):
+            return {}
+        reason = str(risk.get("reason", "")).lower()
+        priority_codes: list[str] = []
+        if "significance" in reason or "statistical" in reason:
+            priority_codes.extend(["missing_significance", "significance_reporting"])
+        if "baseline" in reason:
+            priority_codes.extend(["missing_baseline", "missing_baseline_fairness"])
+        if "ablation" in reason:
+            priority_codes.append("missing_ablation")
+        if "reproduc" in reason:
+            priority_codes.extend(["missing_reproducibility", "missing_system_setting_reproducibility"])
+        if "related work" in reason or "citation" in reason:
+            priority_codes.append("missing_top_venue_related_work_coverage")
+
+        for code in priority_codes:
+            for row in required_check_outcomes:
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("gap_code", "")).strip().lower() == code:
+                    return row
+
+        for row in required_check_outcomes:
+            if not isinstance(row, dict):
+                continue
+            if not bool(row.get("passed", True)):
+                return row
+        return {}
+
+    @staticmethod
+    def _default_fix_actions(
+        *,
+        risk: dict,
+        linked_tasks: list[dict],
+        related_claims: list[dict],
+        check_trace: dict,
+    ) -> list[dict]:
+        actions: list[dict] = []
+        for task in linked_tasks[:2]:
+            if not isinstance(task, dict):
+                continue
+            protocol = task.get("protocol", [])
+            first_step = ""
+            if isinstance(protocol, list):
+                for step in protocol:
+                    if str(step).strip():
+                        first_step = str(step).strip()
+                        break
+            actions.append(
+                {
+                    "action": str(task.get("title", "Run targeted experiment")).strip(),
+                    "why": str(task.get("expected_gain", "")).strip()
+                    or "Directly addresses this rejection risk.",
+                    "expected_gain": str(
+                        task.get("expected_gain", "Reduce reviewer confidence gap.")
+                    ).strip(),
+                    "section_target": "Experiments",
+                    "effort": str(task.get("effort", "M")).strip().upper() or "M",
+                    "protocol_hint": first_step,
+                }
+            )
+
+        if not actions:
+            reason = str(risk.get("reason", "")).lower()
+            if "statistical" in reason or "significance" in reason:
+                actions.extend(
+                    [
+                        {
+                            "action": "Run multi-seed evaluation (>=3 seeds) for all primary metrics.",
+                            "why": "Single-run metrics are often judged as unstable evidence.",
+                            "expected_gain": "Improves soundness and experiment reliability.",
+                            "section_target": "Experiments / Main Results",
+                            "effort": "M",
+                        },
+                        {
+                            "action": "Report significance tests and confidence intervals for headline gains.",
+                            "why": "Reviewers expect p-value/CI support for key claims.",
+                            "expected_gain": "Closes a common P1 reject trigger on statistical validity.",
+                            "section_target": "Experiments / Statistical Analysis",
+                            "effort": "S",
+                        },
+                    ]
+                )
+            elif "baseline" in reason:
+                actions.append(
+                    {
+                        "action": "Add stronger matched-budget baselines and fairness settings.",
+                        "why": "Baseline fairness is a core reviewer checkpoint.",
+                        "expected_gain": "Improves credibility of comparative claims.",
+                        "section_target": "Experiments / Baselines",
+                        "effort": "M",
+                    }
+                )
+            else:
+                actions.append(
+                    {
+                        "action": "Add one direct evidence block per criticized claim.",
+                        "why": "Claim-evidence one-to-one mapping reduces reviewer ambiguity.",
+                        "expected_gain": "Improves confidence and rebuttal defensibility.",
+                        "section_target": "Experiments / Analysis",
+                        "effort": "M",
+                    }
+                )
+
+        check_name = str(check_trace.get("check_name", "")).strip()
+        if check_name:
+            actions.append(
+                {
+                    "action": f"Close required check `{check_name}` with a dedicated subsection.",
+                    "why": "This check is flagged by venue policy trace.",
+                    "expected_gain": "Reduces policy-level rejection risk for this venue.",
+                    "section_target": "Targeted revision subsection",
+                    "effort": "S",
+                }
+            )
+
+        contradiction_claims = [
+            str(row.get("claim_id", "")).strip()
+            for row in related_claims
+            if isinstance(row, dict) and float(row.get("contradiction_score", 0.0) or 0.0) >= 0.45
+        ]
+        if contradiction_claims:
+            actions.append(
+                {
+                    "action": (
+                        f"Resolve contradiction anchors for {', '.join(contradiction_claims[:3])} "
+                        "with scoped claim wording and corrected evidence table."
+                    ),
+                    "why": "Potential negative evidence can trigger strong reviewer pushback.",
+                    "expected_gain": "Prevents rebuttal failure due to claim-result conflict.",
+                    "section_target": "Results / Discussion / Limitations",
+                    "effort": "M",
+                }
+            )
+
+        return actions[:4]
+
+    @staticmethod
+    def _default_expected_impact(risk: dict, fix_actions: list[dict]) -> str:
+        severity = str(risk.get("severity", "P2")).upper()
+        if severity == "P0":
+            return (
+                "If unresolved, this can independently block acceptance; fixing it should materially "
+                "improve acceptability."
+            )
+        if severity == "P1":
+            return (
+                "Fixing these actions should reduce a common reject trigger and raise "
+                "soundness/experiment confidence by one tier."
+            )
+        if fix_actions:
+            return "Fixing the top action should improve reviewer confidence and score stability."
+        return "Addressing this issue should reduce residual rejection risk."
 
     @staticmethod
     def _default_why_happened(reason: str, severity: str) -> str:
@@ -1326,34 +2084,96 @@ class ReportBuilderStep(PipelineStep):
 
     @staticmethod
     def _diagnosis_md(payload: dict) -> str:
+        summary = payload.get("summary", {}) if isinstance(payload.get("summary", {}), dict) else {}
+        quality = (
+            payload.get("paper_parse_quality", {})
+            if isinstance(payload.get("paper_parse_quality", {}), dict)
+            else {}
+        )
         lines = [
             "# Detailed Diagnosis Report",
             "",
             f"Decision Snapshot: **{payload.get('decision', 'N/A')}**",
             "",
             "## Summary",
-            f"- Total issues: {payload.get('summary', {}).get('risk_count', 0)}",
-            f"- P0 issues: {payload.get('summary', {}).get('p0_count', 0)}",
-            f"- P1 issues: {payload.get('summary', {}).get('p1_count', 0)}",
+            f"- Total issues: {summary.get('risk_count', 0)}",
+            f"- P0 issues: {summary.get('p0_count', 0)}",
+            f"- P1 issues: {summary.get('p1_count', 0)}",
+            f"- Executor-generated diagnosis items: {summary.get('executor_items', 0)}",
+            f"- Executor fallback items: {summary.get('executor_fallback_items', 0)}",
+            f"- Rule fallback diagnosis items: {summary.get('fallback_items', 0)}",
+            "",
+            "## Parse Quality Snapshot",
+            f"- Word count: {quality.get('word_count', 0)}",
+            f"- Section count: {quality.get('section_count', 0)}",
+            (
+                f"- Parse warnings: {', '.join(str(x) for x in quality.get('warnings', [])[:4])}"
+                if isinstance(quality.get("warnings", []), list) and quality.get("warnings", [])
+                else "- Parse warnings: none"
+            ),
             "",
             "## Issue-by-Issue Diagnosis",
         ]
         for item in payload.get("items", []):
+            actions = item.get("fix_actions", [])
+            if not isinstance(actions, list):
+                actions = []
+            anchors = item.get("evidence_anchors", [])
+            if not isinstance(anchors, list):
+                anchors = []
+            followups = item.get("reviewer_followups", [])
+            if not isinstance(followups, list):
+                followups = []
             lines.extend(
                 [
                     f"### {item.get('issue_id', 'RISK')} [{item.get('severity', 'P2')}]",
                     f"- Issue: {item.get('issue', '')}",
-                    f"- Why It Happened: {item.get('why_happened', '')}",
-                    f"- Why It Matters: {item.get('why_it_matters', '')}",
-                    f"- Suggested Fix: {item.get('suggested_fix', '')}",
+                    f"- Generation Source: {item.get('generation_source', 'rule_fallback')} (confidence={item.get('confidence', 0.0)})",
+                    f"- Root Cause Analysis: {item.get('root_cause_analysis', item.get('why_happened', ''))}",
+                    f"- Why It Matters: {item.get('impact_analysis', item.get('why_it_matters', ''))}",
+                    f"- Suggested Fix Summary: {item.get('fix_summary', item.get('suggested_fix', ''))}",
+                    f"- Expected Impact: {item.get('expected_impact', '')}",
                     f"- Evidence Anchor: {item.get('evidence_anchor', '')}",
                     (
                         f"- Rebuttal Link: Reviewer {item.get('linked_rebuttal_review_id', '')} "
                         f"-> {item.get('linked_rebuttal_concern', '')}"
                     ),
-                    "",
+                    "- Action Plan:",
                 ]
             )
+            if actions:
+                for idx, action in enumerate(actions, start=1):
+                    if not isinstance(action, dict):
+                        continue
+                    lines.append(
+                        f"  {idx}. {action.get('action', '')} "
+                        f"(effort={action.get('effort', 'M')}, target={action.get('section_target', 'revision')})"
+                    )
+                    why = str(action.get("why", "")).strip()
+                    if why:
+                        lines.append(f"     Why: {why}")
+                    gain = str(action.get("expected_gain", "")).strip()
+                    if gain:
+                        lines.append(f"     Expected gain: {gain}")
+            else:
+                lines.append("  1. Add one targeted experiment and map it directly to the criticized claim.")
+
+            if anchors:
+                lines.append("- Evidence Bundle:")
+                for anchor in anchors[:4]:
+                    if not isinstance(anchor, dict):
+                        continue
+                    lines.append(
+                        f"  - [{anchor.get('source', 'unknown')}] "
+                        f"{ReportBuilderStep._anchor_brief(anchor)}: "
+                        f"{anchor.get('excerpt', '')}"
+                    )
+
+            if followups:
+                lines.append("- Likely Reviewer Follow-up Questions:")
+                for question in followups[:3]:
+                    lines.append(f"  - {question}")
+            lines.append("")
         return "\n".join(lines).strip() + "\n"
 
     def _decision_json_zh(self, payload: dict) -> dict:
@@ -1390,11 +2210,63 @@ class ReportBuilderStep(PipelineStep):
         for item in payload.get("items", []):
             if not isinstance(item, dict):
                 continue
+            fix_actions_zh = []
+            raw_actions = item.get("fix_actions", [])
+            if isinstance(raw_actions, list):
+                for action in raw_actions:
+                    if not isinstance(action, dict):
+                        continue
+                    fix_actions_zh.append(
+                        {
+                            "action": self._phrase_zh(str(action.get("action", ""))),
+                            "why": self._phrase_zh(str(action.get("why", ""))),
+                            "expected_gain": self._phrase_zh(str(action.get("expected_gain", ""))),
+                            "section_target": self._phrase_zh(str(action.get("section_target", ""))),
+                            "effort": action.get("effort", "M"),
+                        }
+                    )
+
+            evidence_anchors_zh = []
+            raw_anchors = item.get("evidence_anchors", [])
+            if isinstance(raw_anchors, list):
+                for anchor in raw_anchors[:8]:
+                    if not isinstance(anchor, dict):
+                        continue
+                    evidence_anchors_zh.append(
+                        {
+                            "section": self._phrase_zh(str(anchor.get("section", ""))),
+                            "passage_id": anchor.get("passage_id", ""),
+                            "source": anchor.get("source", ""),
+                            "page": anchor.get("page", 0),
+                            "kind": anchor.get("kind", ""),
+                            "anchor_label": anchor.get("anchor_label", ""),
+                            "anchor_type": anchor.get("anchor_type", ""),
+                            "locator": anchor.get("locator", {}) if isinstance(anchor.get("locator", {}), dict) else {},
+                            "excerpt": self._phrase_zh(str(anchor.get("excerpt", ""))),
+                        }
+                    )
             items_zh.append(
                 {
                     "issue_id": item.get("issue_id", ""),
                     "severity": item.get("severity", ""),
                     "issue": self._phrase_zh(str(item.get("issue", ""))),
+                    "problem_statement": self._phrase_zh(str(item.get("problem_statement", item.get("issue", "")))),
+                    "generation_source": self._phrase_zh(str(item.get("generation_source", ""))),
+                    "confidence": item.get("confidence", 0.0),
+                    "root_cause_analysis": self._phrase_zh(str(item.get("root_cause_analysis", item.get("why_happened", "")))),
+                    "impact_analysis": self._phrase_zh(str(item.get("impact_analysis", item.get("why_it_matters", "")))),
+                    "fix_summary": self._phrase_zh(str(item.get("fix_summary", item.get("suggested_fix", "")))),
+                    "fix_actions": fix_actions_zh,
+                    "expected_impact": self._phrase_zh(str(item.get("expected_impact", ""))),
+                    "reviewer_followups": [
+                        self._phrase_zh(str(x))
+                        for x in item.get("reviewer_followups", [])
+                        if str(x).strip()
+                    ]
+                    if isinstance(item.get("reviewer_followups", []), list)
+                    else [],
+                    "evidence_anchors": evidence_anchors_zh,
+                    "check_trace": item.get("check_trace", {}),
                     "why_happened": self._phrase_zh(str(item.get("why_happened", ""))),
                     "why_it_matters": self._phrase_zh(str(item.get("why_it_matters", ""))),
                     "suggested_fix": self._phrase_zh(str(item.get("suggested_fix", ""))),
@@ -1406,6 +2278,7 @@ class ReportBuilderStep(PipelineStep):
         return {
             "decision": self._decision_zh(str(payload.get("decision", ""))),
             "summary": payload.get("summary", {}),
+            "paper_parse_quality": payload.get("paper_parse_quality", {}),
             "items": items_zh,
         }
 
@@ -1472,7 +2345,37 @@ class ReportBuilderStep(PipelineStep):
             "None": "无",
         }
         out["strength"] = strength_map.get(out.get("strength", ""), out.get("strength", ""))
+        confidence_level_map = {
+            "Strong": "强",
+            "Medium": "中",
+            "Weak": "弱",
+        }
+        refs = out.get("evidence_refs", [])
+        if isinstance(refs, list):
+            out["evidence_refs"] = [self._evidence_ref_zh(x, confidence_level_map) for x in refs if isinstance(x, dict)]
+        contradiction_refs = out.get("contradictory_evidence_refs", [])
+        if isinstance(contradiction_refs, list):
+            out["contradictory_evidence_refs"] = [
+                self._evidence_ref_zh(x, confidence_level_map) for x in contradiction_refs if isinstance(x, dict)
+            ]
         return out
+
+    def _evidence_ref_zh(self, ref: dict, level_map: dict[str, str]) -> dict:
+        row = dict(ref)
+        lv = str(row.get("confidence_level", "")).strip()
+        if lv:
+            row["confidence_level"] = level_map.get(lv, lv)
+        reason = str(row.get("conflict_reason", "")).strip()
+        if reason:
+            row["conflict_reason"] = self._phrase_zh(reason)
+        relation_map = {
+            "support": "支持",
+            "contradiction": "冲突",
+        }
+        rel = str(row.get("relation", "")).strip().lower()
+        if rel:
+            row["relation"] = relation_map.get(rel, rel)
+        return row
 
     def _reviewer_questions_zh(self, rows: object) -> list[dict]:
         out: list[dict] = []
@@ -1501,6 +2404,10 @@ class ReportBuilderStep(PipelineStep):
                     "why_this_will_be_asked": self._phrase_zh(str(row.get("why_this_will_be_asked", ""))),
                     "trigger_gap_codes": row.get("trigger_gap_codes", []),
                     "linked_risk_ids": row.get("linked_risk_ids", []),
+                    "evidence_anchor_refs": row.get("evidence_anchor_refs", [])
+                    if isinstance(row.get("evidence_anchor_refs", []), list)
+                    else [],
+                    "evidence_anchor_hint": str(row.get("evidence_anchor_hint", "")),
                     "evidence_to_prepare": [
                         self._phrase_zh(str(x))
                         for x in row.get("evidence_to_prepare", [])
@@ -1908,6 +2815,9 @@ class ReportBuilderStep(PipelineStep):
             "One or more key claims have weak evidence alignment and need direct support.": "一项或多项关键主张的证据对齐偏弱，需要直接支撑。",
             "Reviewers typically reduce confidence when claim, evidence, and reporting are not tightly linked.": "当主张、证据与报告链条不够紧密时，审稿人通常会下调置信度。",
             "Add one targeted experiment, one statistical/significance validation block, and explicit section-level paper changes for this concern.": "针对该问题补充一组定向实验、一组统计显著性验证，并在论文中明确标注对应修改位置。",
+            "executor": "agent执行",
+            "executor_fallback": "执行器回退（确定性）",
+            "rule_fallback": "规则回退",
             "Mitigate": "缓解",
         }
         if text in mapping:
@@ -2034,34 +2944,95 @@ class ReportBuilderStep(PipelineStep):
 
     @staticmethod
     def _diagnosis_md_zh(payload: dict) -> str:
+        summary = payload.get("summary", {}) if isinstance(payload.get("summary", {}), dict) else {}
+        quality = (
+            payload.get("paper_parse_quality", {})
+            if isinstance(payload.get("paper_parse_quality", {}), dict)
+            else {}
+        )
         lines = [
             "# 详细诊断报告",
             "",
             f"决策快照：**{payload.get('decision', 'N/A')}**",
             "",
             "## 汇总",
-            f"- 问题总数：{payload.get('summary', {}).get('risk_count', 0)}",
-            f"- P0 问题数：{payload.get('summary', {}).get('p0_count', 0)}",
-            f"- P1 问题数：{payload.get('summary', {}).get('p1_count', 0)}",
+            f"- 问题总数：{summary.get('risk_count', 0)}",
+            f"- P0 问题数：{summary.get('p0_count', 0)}",
+            f"- P1 问题数：{summary.get('p1_count', 0)}",
+            f"- Agent 诊断条目：{summary.get('executor_items', 0)}",
+            f"- Executor 回退条目：{summary.get('executor_fallback_items', 0)}",
+            f"- 规则回退条目：{summary.get('fallback_items', 0)}",
+            "",
+            "## 解析质量快照",
+            f"- 词数：{quality.get('word_count', 0)}",
+            f"- 章节数：{quality.get('section_count', 0)}",
+            (
+                f"- 解析告警：{', '.join(str(x) for x in quality.get('warnings', [])[:4])}"
+                if isinstance(quality.get("warnings", []), list) and quality.get("warnings", [])
+                else "- 解析告警：无"
+            ),
             "",
             "## 逐项问题诊断",
         ]
         for item in payload.get("items", []):
+            actions = item.get("fix_actions", [])
+            if not isinstance(actions, list):
+                actions = []
+            anchors = item.get("evidence_anchors", [])
+            if not isinstance(anchors, list):
+                anchors = []
+            followups = item.get("reviewer_followups", [])
+            if not isinstance(followups, list):
+                followups = []
             lines.extend(
                 [
                     f"### {item.get('issue_id', 'RISK')} [{item.get('severity', 'P2')}]",
                     f"- 存在问题：{item.get('issue', '')}",
-                    f"- 出现原因：{item.get('why_happened', '')}",
-                    f"- 影响解释：{item.get('why_it_matters', '')}",
-                    f"- 修复建议：{item.get('suggested_fix', '')}",
+                    f"- 生成来源：{item.get('generation_source', '')}（置信度={item.get('confidence', 0.0)}）",
+                    f"- 出现原因：{item.get('root_cause_analysis', item.get('why_happened', ''))}",
+                    f"- 影响解释：{item.get('impact_analysis', item.get('why_it_matters', ''))}",
+                    f"- 修复摘要：{item.get('fix_summary', item.get('suggested_fix', ''))}",
+                    f"- 预期收益：{item.get('expected_impact', '')}",
                     f"- 证据锚点：{item.get('evidence_anchor', '')}",
                     (
                         f"- Rebuttal 对应：Reviewer {item.get('linked_rebuttal_review_id', '')} "
                         f"-> {item.get('linked_rebuttal_concern', '')}"
                     ),
-                    "",
+                    "- 行动计划：",
                 ]
             )
+            if actions:
+                for idx, action in enumerate(actions, start=1):
+                    if not isinstance(action, dict):
+                        continue
+                    lines.append(
+                        f"  {idx}. {action.get('action', '')} "
+                        f"(工作量={action.get('effort', 'M')}, 目标章节={action.get('section_target', 'revision')})"
+                    )
+                    why = str(action.get("why", "")).strip()
+                    if why:
+                        lines.append(f"     原因：{why}")
+                    gain = str(action.get("expected_gain", "")).strip()
+                    if gain:
+                        lines.append(f"     预计提升：{gain}")
+            else:
+                lines.append("  1. 补充一个针对该问题的实验，并与主张建立一一对应。")
+
+            if anchors:
+                lines.append("- 证据包：")
+                for anchor in anchors[:4]:
+                    if not isinstance(anchor, dict):
+                        continue
+                    lines.append(
+                        f"  - [{anchor.get('source', 'unknown')}] "
+                        f"{anchor.get('section', 'unknown')}/{anchor.get('passage_id', 'unknown')}: "
+                        f"{anchor.get('excerpt', '')}"
+                    )
+            if followups:
+                lines.append("- 可能追问：")
+                for question in followups[:3]:
+                    lines.append(f"  - {question}")
+            lines.append("")
         return "\n".join(lines).strip() + "\n"
 
     @staticmethod
@@ -2137,6 +3108,12 @@ class ReportBuilderStep(PipelineStep):
             sections = diagnostics.get("selected_sections", []) if isinstance(diagnostics, dict) else []
             avg_quality = diagnostics.get("avg_quality", 0.0) if isinstance(diagnostics, dict) else 0.0
             section_text = ", ".join(str(x) for x in sections[:3]) if isinstance(sections, list) else ""
+            refs = row.get("evidence_refs", []) if isinstance(row.get("evidence_refs", []), list) else []
+            top_anchor = ""
+            if refs:
+                first_ref = refs[0]
+                if isinstance(first_ref, dict):
+                    top_anchor = ReportBuilderStep._anchor_brief(first_ref)
             contradiction = float(row.get("contradiction_score", 0.0) or 0.0)
             contradiction_flag = "是" if bool(row.get("contradiction_detected")) else "否"
             contradiction_refs = row.get("contradictory_evidence_refs", [])
@@ -2144,10 +3121,15 @@ class ReportBuilderStep(PipelineStep):
             if isinstance(contradiction_refs, list) and contradiction_refs:
                 first = contradiction_refs[0]
                 if isinstance(first, dict):
-                    contradiction_anchor = f"{first.get('section', '')}/{first.get('passage_id', '')}".strip("/")
+                    contradiction_anchor = ReportBuilderStep._anchor_brief(first)
+            confidence_text = ReportBuilderStep._evidence_confidence_brief_zh(
+                row.get("evidence_confidence", {})
+            )
             lines.append(
                 f"- {row['claim_id']} [{row['strength']}] score={row['score']} -> {len(row['evidence_refs'])} 条证据；"
                 f"锚点章节={section_text or 'n/a'}；平均质量={avg_quality}；"
+                f"最强锚点={top_anchor or 'n/a'}；"
+                f"证据置信度={confidence_text or 'n/a'}；"
                 f"反证={contradiction_flag}（{contradiction}）；"
                 f"反证锚点={contradiction_anchor or 'n/a'}"
             )
@@ -2204,9 +3186,12 @@ class ReportBuilderStep(PipelineStep):
             for row in rows[:8]:
                 if not isinstance(row, dict):
                     continue
+                persona = ReportBuilderStep._persona_display_zh(
+                    str(row.get("reviewer_persona", "empirical"))
+                )
                 lines.append(
                     f"- [{row.get('priority', 'medium')}] {row.get('question', '')} "
-                    f"(视角={row.get('reviewer_persona', 'empirical')})"
+                    f"(视角={persona})"
                 )
                 why = str(row.get("why_this_will_be_asked", "")).strip()
                 if why:
@@ -2214,5 +3199,8 @@ class ReportBuilderStep(PipelineStep):
                 evid = row.get("evidence_to_prepare", [])
                 if isinstance(evid, list) and evid:
                     lines.append(f"  - 建议准备证据：{evid[0]}")
+                anchor_hint = ReportBuilderStep._question_anchor_hint(row)
+                if anchor_hint:
+                    lines.append(f"  - 证据锚点：{anchor_hint}")
 
         return "\n".join(lines).strip() + "\n"

@@ -116,6 +116,16 @@ class VenueProfileResolverStep(PipelineStep):
                     source = "fallback_global+executor_bootstrap"
                     source_notes.append("venue_profile_bootstrapped_by_executor")
 
+        required_checks, required_check_specs = self._ensure_section_length_ratio_check(
+            venue=venue,
+            required_checks=required_checks,
+            required_check_specs=required_check_specs,
+        )
+        required_checks, required_check_specs = self._ensure_terminology_consistency_check(
+            required_checks=required_checks,
+            required_check_specs=required_check_specs,
+        )
+
         profile_payload = {
             "venue": venue,
             "year": year,
@@ -257,7 +267,8 @@ class VenueProfileResolverStep(PipelineStep):
         if isinstance(raw_checks, list):
             cleaned = [str(x).strip() for x in raw_checks if str(x).strip()]
             if cleaned:
-                checks = list(dict.fromkeys(cleaned))
+                # Unknown-venue bootstrap should enrich fallback checks, not replace them.
+                checks = list(dict.fromkeys(required_checks + cleaned))
 
         merged_specs = dict(required_check_specs)
         raw_specs = payload.get("required_check_specs")
@@ -266,6 +277,8 @@ class VenueProfileResolverStep(PipelineStep):
                 k = str(key).strip()
                 if k and isinstance(value, dict):
                     merged_specs[k] = value
+        if merged_specs:
+            checks = list(dict.fromkeys(checks + list(merged_specs.keys())))
 
         return {
             "scoring_axes": axes,
@@ -274,6 +287,127 @@ class VenueProfileResolverStep(PipelineStep):
             "required_checks": checks,
             "required_check_specs": merged_specs,
         }
+
+    @staticmethod
+    def _ensure_section_length_ratio_check(
+        *,
+        venue: str,
+        required_checks: list[str],
+        required_check_specs: dict[str, dict],
+    ) -> tuple[list[str], dict[str, dict]]:
+        check_name = "section_length_ratio"
+        checks = list(dict.fromkeys(required_checks + [check_name]))
+        specs = dict(required_check_specs)
+
+        normalized_venue = str(venue or "").strip().upper()
+        preset = VenueProfileResolverStep._section_ratio_preset(normalized_venue)
+        existing = specs.get(check_name)
+        if not isinstance(existing, dict):
+            existing = {}
+
+        defaults = {
+            "check_name": check_name,
+            "gap_code": "section_ratio_imbalance",
+            "description": (
+                "Section length balance appears misaligned with common venue writing structure "
+                "(introduction/method/experiments/discussion)."
+            ),
+            "severity_hint": "P2",
+            "keywords": ["introduction", "method", "experiments", "discussion"],
+            "min_hits": 1,
+            "min_distinct_sections": 1,
+            "section_ratio_targets": preset["targets"],
+            "section_ratio_tolerance": preset["tolerance"],
+            "section_ratio_min_total_words": 900,
+            "section_ratio_min_bucket_words": 80,
+            "section_aliases": preset["aliases"],
+            "notes": "Style-structure check; skip strict enforcement when draft is too short.",
+        }
+        defaults.update(existing)
+        specs[check_name] = defaults
+        return checks, specs
+
+    @staticmethod
+    def _section_ratio_preset(venue: str) -> dict:
+        aliases = {
+            "introduction": ["introduction", "background", "motivation", "overview"],
+            "method": ["method", "approach", "model", "architecture", "methodology", "framework", "system"],
+            "experiments": ["experiments", "evaluation", "results", "benchmark", "empirical"],
+            "discussion": ["discussion", "analysis", "conclusion", "limitations", "error analysis", "future work"],
+        }
+
+        if venue in {"SIGMOD", "VLDB", "ICDE", "KDD"}:
+            return {
+                "targets": {
+                    "introduction": 0.14,
+                    "method": 0.28,
+                    "experiments": 0.42,
+                    "discussion": 0.16,
+                },
+                "tolerance": 0.12,
+                "aliases": aliases,
+            }
+
+        if venue in {"ACL-ARR", "ACL", "NAACL", "EMNLP"}:
+            return {
+                "targets": {
+                    "introduction": 0.16,
+                    "method": 0.30,
+                    "experiments": 0.36,
+                    "discussion": 0.18,
+                },
+                "tolerance": 0.1,
+                "aliases": aliases,
+            }
+
+        return {
+            "targets": {
+                "introduction": 0.18,
+                "method": 0.32,
+                "experiments": 0.34,
+                "discussion": 0.16,
+            },
+            "tolerance": 0.1,
+            "aliases": aliases,
+        }
+
+    @staticmethod
+    def _ensure_terminology_consistency_check(
+        *,
+        required_checks: list[str],
+        required_check_specs: dict[str, dict],
+    ) -> tuple[list[str], dict[str, dict]]:
+        check_name = "terminology_consistency"
+        checks = list(dict.fromkeys(required_checks + [check_name]))
+        specs = dict(required_check_specs)
+        existing = specs.get(check_name)
+        if not isinstance(existing, dict):
+            existing = {}
+
+        defaults = {
+            "check_name": check_name,
+            "gap_code": "terminology_inconsistency",
+            "description": (
+                "Technical terminology appears inconsistent across sections "
+                "(term variants, acronym expansion drift, or unstable naming)."
+            ),
+            "severity_hint": "P2",
+            "keywords": ["terminology", "notation", "acronym", "consistency"],
+            "min_hits": 1,
+            "min_distinct_sections": 1,
+            "terminology_min_mentions": 2,
+            "terminology_min_variant_hits": 1,
+            "terminology_exempt_terms": [
+                "sota",
+                "llm",
+                "gpu",
+                "cpu",
+            ],
+            "notes": "Prefer one canonical term per concept and keep acronym expansion stable.",
+        }
+        defaults.update(existing)
+        specs[check_name] = defaults
+        return checks, specs
 
     @staticmethod
     def _merge_profile_overrides(

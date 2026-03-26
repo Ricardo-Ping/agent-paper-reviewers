@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_paper_reviewers.executors.deterministic import DeterministicExecutor
 from agent_paper_reviewers.mcp.base import MCPToolProvider, PolicyResolveResult
 from agent_paper_reviewers.models import RebuttalPolicy, ReviewRunInput
 from agent_paper_reviewers.pipeline.base import PipelineContext
@@ -75,3 +76,48 @@ def test_unknown_venue_can_use_mcp_discovery(tmp_path: Path) -> None:
     assert vp["profile"]["openreview_group_id"] == "UNKNOWN.cc/2026/Conference"
     assert "baseline_coverage" in vp["profile"]["required_checks"]
     assert "baseline_coverage" in vp["profile"]["required_check_specs"]
+
+
+def test_unknown_venue_executor_bootstrap_does_not_shrink_fallback_checks(tmp_path: Path) -> None:
+    paper = tmp_path / "paper.md"
+    paper.write_text("# Title\n\n## Abstract\nA.\n", encoding="utf-8")
+    payload = {
+        "paper": {"format": "md", "path": str(paper)},
+        "venue": {"name": "UnknownConf", "year": 2026},
+        "claims": ["Claim one."],
+        "options": {
+            "language_mode": "en",
+            "executor_backend": "codex",
+            "mcp_backend": "disabled",
+            "always_export_pdf": False,
+        },
+    }
+    review_input = ReviewRunInput.model_validate(payload)
+    run_dir = tmp_path / "run2"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    ctx = PipelineContext(
+        run_id="run_unknown_bootstrap",
+        run_dir=run_dir,
+        input_data=review_input,
+        mcp_tools=None,
+    )
+
+    step = VenueProfileResolverStep(
+        Path(__file__).resolve().parents[1],
+        executor=DeterministicExecutor(),
+    )
+    step.run(ctx)
+
+    vp = ctx.artifacts["venue_profile"]
+    checks = vp["profile"]["required_checks"]
+    specs = vp["profile"]["required_check_specs"]
+    assert vp["used_fallback"] is True
+    assert "executor_bootstrap" in vp["source"]
+    assert len(checks) >= 10
+    assert "contribution_alignment" in checks
+    assert "error_analysis" in checks
+    assert "robustness_checks" in checks
+    assert "practical_impact" in checks
+    assert "top_venue_related_work_coverage" in checks
+    assert "baseline_coverage" in specs
+    assert "statistical_significance" in specs

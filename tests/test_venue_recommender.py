@@ -46,6 +46,16 @@ def test_recommend_venues_returns_ranked_candidates() -> None:
     assert "venue" in first
     assert "match_score" in first
     assert isinstance(first["reasons"], list)
+    assert "rule_readiness" in first
+    rr = first["rule_readiness"]
+    assert "strict_pass_ratio" in rr
+    assert "weighted_coverage" in rr
+    assert "formula" in rr
+    assert "check_diagnostics" in first
+    assert isinstance(first["check_diagnostics"], list)
+    assert first["check_diagnostics"]
+    assert "required_check_mapping" in first
+    assert isinstance(first["required_check_mapping"], list)
 
 
 def test_pipeline_exports_venue_recommendations(tmp_path: Path) -> None:
@@ -76,6 +86,11 @@ def test_pipeline_exports_venue_recommendations(tmp_path: Path) -> None:
     assert reco_path.exists()
     reco_payload = json.loads(reco_path.read_text(encoding="utf-8"))
     assert reco_payload["recommended_venues"]
+    first = reco_payload["recommended_venues"][0]
+    reasons = first.get("reasons", [])
+    assert isinstance(reasons, list) and reasons
+    # Reasons should contain actionable gap details, not only generic templates.
+    assert any("hits=" in str(r) or "missing keywords" in str(r) for r in reasons)
 
     brief = (run_dir / "decision_brief.en.md").read_text(encoding="utf-8-sig")
     assert "Recommended Venues (If You Are Unsure)" in brief

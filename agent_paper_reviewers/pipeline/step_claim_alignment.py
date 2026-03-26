@@ -107,22 +107,11 @@ class ClaimEvidenceAlignerStep(PipelineStep):
             strength = self._strength(top_score)
             strength = self._adjust_strength_for_contradiction(strength, contradiction_score)
 
-            refs = [
-                EvidenceRef(
-                    section=item[9]["section"],
-                    passage_id=item[9]["id"],
-                    excerpt=item[9]["text"][:220],
-                )
-                for item in top
-            ]
+            refs = [self._support_evidence_ref(item) for item in top]
             contradictory_refs = [
-                EvidenceRef(
-                    section=item[6]["section"],
-                    passage_id=item[6]["id"],
-                    excerpt=item[6]["text"][:220],
-                )
-                for item in contradiction_candidates[:2]
+                self._contradiction_evidence_ref(item) for item in contradiction_candidates[:2]
             ]
+            confidence_summary = self._evidence_confidence_summary(refs, contradictory_refs)
 
             record = ClaimAlignment(
                 claim_id=claim["claim_id"],
@@ -137,6 +126,11 @@ class ClaimEvidenceAlignerStep(PipelineStep):
             row["contradiction_score"] = round(contradiction_score, 3)
             row["contradictory_evidence_refs"] = [r.model_dump() for r in contradictory_refs]
             row["contradiction_summary"] = self._contradiction_summary(claim, contradiction_score, contradictory_refs)
+            row["evidence_confidence"] = confidence_summary
+            row["conflict_alert"] = bool(
+                row["contradiction_detected"]
+                or any(bool(ref.conflict_alert) for ref in refs)
+            )
             row["diagnostics"] = {
                 "claim_profile": claim_profile,
                 "selected_sections": [str(item[9].get("section", "")) for item in top],
@@ -170,6 +164,11 @@ class ClaimEvidenceAlignerStep(PipelineStep):
                 "section_prior_weight": 0.1,
                 "kind_prior_weight": 0.08,
                 "domain_profile": domain_profile,
+            },
+            "evidence_confidence_policy": {
+                "support": {"strong_threshold": 0.75, "medium_threshold": 0.5},
+                "contradiction": {"strong_threshold": 0.7, "medium_threshold": 0.48},
+                "labels": ["Strong", "Medium", "Weak"],
             },
         }
         ctx.artifacts["claim_evidence_matrix"] = payload
@@ -521,3 +520,188 @@ class ClaimEvidenceAlignerStep(PipelineStep):
         if score >= 0.36:
             return "Weak"
         return "None"
+
+    def _support_evidence_ref(self, item: tuple) -> EvidenceRef:
+        (
+            support_score,
+            semantic,
+            lexical,
+            _semantic_weight,
+            _lexical_weight,
+            section_prior,
+            kind_prior,
+            quality,
+            contradiction,
+            passage,
+        ) = item
+        confidence_score = self._support_confidence_score(
+            support_score=float(support_score),
+            semantic=float(semantic),
+            lexical=float(lexical),
+            section_prior=float(section_prior),
+            kind_prior=float(kind_prior),
+            quality=float(quality),
+            contradiction=float(contradiction),
+        )
+        confidence_level = self._confidence_level(confidence_score, strong=0.75, medium=0.5)
+        conflict_alert = float(contradiction) >= 0.45
+        conflict_reason = (
+            f"Potential directional conflict detected in this support evidence (contradiction={float(contradiction):.3f})."
+            if conflict_alert
+            else ""
+        )
+        return self._build_evidence_ref(
+            passage=passage,
+            excerpt=str(passage.get("text", ""))[:220],
+            confidence_level=confidence_level,
+            confidence_score=confidence_score,
+            conflict_alert=conflict_alert,
+            conflict_reason=conflict_reason,
+            relation="support",
+        )
+
+    def _contradiction_evidence_ref(self, item: tuple) -> EvidenceRef:
+        (
+            contradiction,
+            semantic,
+            lexical,
+            section_prior,
+            kind_prior,
+            quality,
+            passage,
+        ) = item
+        confidence_score = self._contradiction_confidence_score(
+            contradiction=float(contradiction),
+            semantic=float(semantic),
+            lexical=float(lexical),
+            section_prior=float(section_prior),
+            kind_prior=float(kind_prior),
+            quality=float(quality),
+        )
+        confidence_level = self._confidence_level(confidence_score, strong=0.7, medium=0.48)
+        return self._build_evidence_ref(
+            passage=passage,
+            excerpt=str(passage.get("text", ""))[:220],
+            confidence_level=confidence_level,
+            confidence_score=confidence_score,
+            conflict_alert=True,
+            conflict_reason=(
+                f"Contradiction evidence against claim direction (contradiction={float(contradiction):.3f})."
+            ),
+            relation="contradiction",
+        )
+
+    @staticmethod
+    def _support_confidence_score(
+        *,
+        support_score: float,
+        semantic: float,
+        lexical: float,
+        section_prior: float,
+        kind_prior: float,
+        quality: float,
+        contradiction: float,
+    ) -> float:
+        raw = (
+            0.52 * support_score
+            + 0.16 * quality
+            + 0.12 * max(semantic, lexical)
+            + 0.1 * section_prior
+            + 0.1 * kind_prior
+        )
+        raw *= 1.0 - 0.35 * max(0.0, min(1.0, contradiction))
+        return round(ClaimEvidenceAlignerStep._clip01(raw), 3)
+
+    @staticmethod
+    def _contradiction_confidence_score(
+        *,
+        contradiction: float,
+        semantic: float,
+        lexical: float,
+        section_prior: float,
+        kind_prior: float,
+        quality: float,
+    ) -> float:
+        raw = (
+            0.6 * contradiction
+            + 0.14 * quality
+            + 0.12 * max(semantic, lexical)
+            + 0.08 * section_prior
+            + 0.06 * kind_prior
+        )
+        return round(ClaimEvidenceAlignerStep._clip01(raw), 3)
+
+    @staticmethod
+    def _confidence_level(score: float, *, strong: float, medium: float) -> str:
+        if score >= strong:
+            return "Strong"
+        if score >= medium:
+            return "Medium"
+        return "Weak"
+
+    @staticmethod
+    def _clip01(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    @staticmethod
+    def _build_evidence_ref(
+        *,
+        passage: dict,
+        excerpt: str,
+        confidence_level: str,
+        confidence_score: float,
+        conflict_alert: bool,
+        conflict_reason: str,
+        relation: str,
+    ) -> EvidenceRef:
+        locator = passage.get("locator", {})
+        if not isinstance(locator, dict):
+            locator = {}
+        return EvidenceRef(
+            section=str(passage.get("section", "unknown")),
+            passage_id=str(passage.get("id", "unknown")),
+            excerpt=str(excerpt or "")[:220],
+            section_id=str(passage.get("section_id", "") or ""),
+            section_index=int(passage.get("section_index", 0) or 0),
+            page=int(passage.get("page", 0) or 0),
+            kind=str(passage.get("kind", "") or ""),
+            anchor_label=str(passage.get("anchor_label", "") or ""),
+            anchor_type=str(passage.get("anchor_type", "") or ""),
+            locator=locator,
+            confidence_level=confidence_level,
+            confidence_score=round(ClaimEvidenceAlignerStep._clip01(confidence_score), 3),
+            conflict_alert=bool(conflict_alert),
+            conflict_reason=str(conflict_reason or ""),
+            relation=str(relation or "support"),
+        )
+
+    @staticmethod
+    def _evidence_confidence_summary(
+        support_refs: list[EvidenceRef], contradiction_refs: list[EvidenceRef]
+    ) -> dict:
+        def _count_levels(rows: list[EvidenceRef]) -> dict[str, int]:
+            levels = {"Strong": 0, "Medium": 0, "Weak": 0}
+            for ref in rows:
+                lv = str(ref.confidence_level or "Weak")
+                if lv not in levels:
+                    lv = "Weak"
+                levels[lv] += 1
+            return levels
+
+        support_counts = _count_levels(support_refs)
+        contradiction_counts = _count_levels(contradiction_refs)
+        support_scores = [float(ref.confidence_score or 0.0) for ref in support_refs]
+        contradiction_scores = [float(ref.confidence_score or 0.0) for ref in contradiction_refs]
+        return {
+            "support": {
+                "counts": support_counts,
+                "max_confidence_score": round(max(support_scores), 3) if support_scores else 0.0,
+                "min_confidence_score": round(min(support_scores), 3) if support_scores else 0.0,
+            },
+            "contradiction": {
+                "counts": contradiction_counts,
+                "max_confidence_score": round(max(contradiction_scores), 3) if contradiction_scores else 0.0,
+                "min_confidence_score": round(min(contradiction_scores), 3) if contradiction_scores else 0.0,
+            },
+            "conflict_alert": bool(contradiction_refs),
+        }

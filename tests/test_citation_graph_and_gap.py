@@ -124,6 +124,52 @@ def test_novelty_signal_not_only_incoming_citations_for_recent_paper(
     assert ctx.artifacts["citation_graph"]["stats"]["incoming_count"] == 0
 
 
+def test_citation_graph_infers_supporting_vs_challenging_contexts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ctx = _ctx(tmp_path)
+    ctx.artifacts["paper_structured"] = {
+        "title": "Sample Paper",
+        "raw_text": (
+            "# Introduction\n"
+            "Following [1], we adopt the same decomposition strategy for SQL normalization. "
+            "However, unlike [2], our system avoids the brittle rule-only pipeline and improves robustness.\n\n"
+            "References\n"
+            "[1] A decomposition strategy for SQL translation. SIGMOD 2021.\n"
+            "[2] A rule-only SQL rewrite pipeline. VLDB 2020.\n"
+        ),
+        "sections": [],
+    }
+
+    def fake_fetch(self, title: str):
+        return None, ["semantic_scholar_rate_limited"]
+
+    monkeypatch.setattr(citation_module.SemanticScholarClient, "fetch_citation_graph", fake_fetch)
+    CitationGraphStep().run(ctx)
+
+    graph = ctx.artifacts["citation_graph"]
+    refs = graph.get("outgoing_references", [])
+    assert len(refs) >= 2
+
+    by_idx = {
+        int(x.get("local_ref_index", -1)): x
+        for x in refs
+        if isinstance(x, dict) and x.get("local_ref_index") is not None
+    }
+    assert by_idx[1]["citation_stance"] == "supporting"
+    assert by_idx[2]["citation_stance"] == "challenging"
+    assert float(by_idx[1].get("citation_stance_confidence", 0.0) or 0.0) > 0.0
+    assert float(by_idx[2].get("citation_stance_confidence", 0.0) or 0.0) > 0.0
+
+    stats = graph.get("stats", {})
+    counts = stats.get("outgoing_stance_counts", {})
+    assert int(counts.get("supporting", 0) or 0) >= 1
+    assert int(counts.get("challenging", 0) or 0) >= 1
+    assert float(stats.get("outgoing_support_ratio", 0.0) or 0.0) > 0.0
+    assert float(stats.get("outgoing_challenge_ratio", 0.0) or 0.0) > 0.0
+
+
 def test_gap_detector_adds_citation_coverage_gaps(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
     ctx.artifacts["paper_structured"] = {"raw_text": "Main content with little related work."}
@@ -210,3 +256,48 @@ def test_gap_detector_honors_venue_required_check_specs(tmp_path: Path) -> None:
     codes = {x["code"] for x in ctx.artifacts["gaps"]["gaps"]}
     assert "missing_top_venue_related_work_coverage" in codes
     assert "required_check_outcomes" in ctx.artifacts["gaps"]
+
+
+def test_gap_detector_adds_citation_context_challenge_gap(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    ctx.artifacts["paper_structured"] = {"raw_text": "Main content."}
+    ctx.artifacts["evidence_index"] = {
+        "passages": [{"id": "p1", "section": "related work", "text": "prior work discussion"}]
+    }
+    ctx.artifacts["venue_profile"] = {"profile": {"required_checks": []}}
+    ctx.artifacts["claim_evidence_matrix"] = {"alignments": []}
+    ctx.artifacts["citation_graph"] = {
+        "paper": {"year": 2026},
+        "outgoing_references": [
+            {"title": "Ref A", "citation_stance": "challenging"},
+            {"title": "Ref B", "citation_stance": "challenging"},
+            {"title": "Ref C", "citation_stance": "challenging"},
+            {"title": "Ref D", "citation_stance": "supporting"},
+            {"title": "Ref E", "citation_stance": "neutral"},
+            {"title": "Ref F", "citation_stance": "neutral"},
+        ],
+        "incoming_citations": [],
+        "stats": {
+            "outgoing_count": 6,
+            "incoming_count": 0,
+            "baseline_like_reference_count": 2,
+            "reference_coverage_score": 0.35,
+            "novelty_signal_score": 0.5,
+            "content_novelty_score": 0.6,
+            "top_venue_reference_count": 3,
+            "recent_top_venue_reference_count": 2,
+            "outgoing_stance_counts": {"supporting": 1, "challenging": 3, "neutral": 2},
+            "outgoing_support_ratio": 0.167,
+            "outgoing_challenge_ratio": 0.5,
+            "outgoing_stance_context_coverage_ratio": 0.67,
+        },
+        "source": "local_only",
+    }
+
+    GapDetectorStep().run(ctx)
+    rows = ctx.artifacts["gaps"]["gaps"]
+    codes = {x["code"] for x in rows}
+    assert "citation_context_challenge_dominant" in codes
+    row = next(x for x in rows if x["code"] == "citation_context_challenge_dominant")
+    assert row["evidence_refs"]
+    assert any("[challenging]" in str(ref.get("excerpt", "")).lower() for ref in row["evidence_refs"])

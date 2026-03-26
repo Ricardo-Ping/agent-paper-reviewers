@@ -137,6 +137,14 @@ class RequiredCheckSpec(BaseModel):
     min_citation_baseline_like: int = 0
     min_citation_top_venue: int = 0
     min_citation_top_venue_recent: int = 0
+    section_ratio_targets: dict[str, float] = Field(default_factory=dict)
+    section_ratio_tolerance: float = 0.0
+    section_ratio_min_total_words: int = 0
+    section_ratio_min_bucket_words: int = 0
+    section_aliases: dict[str, list[str]] = Field(default_factory=dict)
+    terminology_min_mentions: int = 0
+    terminology_min_variant_hits: int = 0
+    terminology_exempt_terms: list[str] = Field(default_factory=list)
     notes: str = ""
 
 
@@ -170,6 +178,18 @@ class EvidenceRef(BaseModel):
     section: str
     passage_id: str
     excerpt: str
+    section_id: str = ""
+    section_index: int = 0
+    page: int = 0
+    kind: str = ""
+    anchor_label: str = ""
+    anchor_type: str = ""
+    locator: dict[str, Any] = Field(default_factory=dict)
+    confidence_level: str = ""
+    confidence_score: float = 0.0
+    conflict_alert: bool = False
+    conflict_reason: str = ""
+    relation: str = "support"
 
 
 class ClaimAlignment(BaseModel):
@@ -215,6 +235,8 @@ class RebuttalItem(BaseModel):
     response: str
     new_evidence: list[str]
     paper_change: str
+    evidence_anchor_refs: list[EvidenceRef] = Field(default_factory=list)
+    evidence_anchor_hint: str = ""
     char_count: int
     char_limit: int
 

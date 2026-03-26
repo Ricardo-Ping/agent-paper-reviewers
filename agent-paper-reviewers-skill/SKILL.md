@@ -172,6 +172,13 @@ python -m agent_paper_reviewers.cli refresh-venue --venue all --year 2026
 ```
 
 ## 输出文件与作用
+研究生优先入口（建议先看）：
+- `START_HERE.md`：总入口，告诉用户先看哪 3 个文件。
+- `student_pack/en/001-submission-decision.md`：一页决策（是否建议投稿 + Top 阻断问题）。
+- `student_pack/en/002-action-items.md`：按优先级执行的行动清单（证据锚点 + 工作量）。
+- `student_pack/en/003-rebuttal-draft.md`：与风险映射的 rebuttal 草稿。
+- 双语模式额外生成 `student_pack/zh/*` 与 `START_HERE.zh.md`。
+
 核心报告：
 - `decision_brief.en.md/json`：短版投稿决策（含各评分解释）。
 - `full_review.en.md/json`：逐条风险与证据对齐明细（含各评分解释）。
@@ -187,6 +194,13 @@ python -m agent_paper_reviewers.cli refresh-venue --venue all --year 2026
 - `diagnosis_report.zh.md/json`
 - `rebuttal.zh.md/json`
 - 当 `options.always_export_pdf=true` 时，额外生成对应 `*.pdf`。
+
+## 双语翻译质量边界（务必告知用户）
+- 双语输出默认用于“阅读辅助与沟通”，不是最终投稿文本的自动定稿器。
+- 当前翻译链路按以下顺序回退：术语表替换 -> 在线翻译（GoogleTranslator）-> 本地 MarianMT -> executor 的 `translate_zh` 能力 -> 稳定回退（pseudo-translate）。
+- 在 deterministic executor、离线环境、或翻译后端不可用时，中文结果可能退化为“规则替换/占位式翻译”，会出现中英文混杂或表达生硬。
+- 任何对外提交（论文正文、正式 rebuttal）都应以英文源稿为准，并对中文镜像做人审校对。
+- 如果你希望提高中文质量：优先使用具备真实翻译能力的 executor backend，并确保网络/API 可用。
 
 结构化与调试：
 - `claim_discovery.json`：自动发现主张候选与确认建议。
@@ -219,6 +233,7 @@ python -m agent_paper_reviewers.cli refresh-venue --venue all --year 2026
 - 出现 `pdf_parse_quality_*`：说明解析质量偏低，先确认 PDF 文本层，必要时先 OCR 或转 Markdown 再跑。
 - 中文显示异常：确认编辑器使用 UTF-8 打开。
 - `policy_needs_manual_check=true`：动态规则解析失败，已回退本地规则。
+- 诊断报告提示 `pseudo-translate`：表示当前使用了翻译回退路径，中文仅供内部阅读参考，建议开启真实翻译后端后重跑。
 
 ## 反馈闭环说明
 每次 run 结束都会输出 `feedback_template.json`。用户可逐条标记风险判断是否正确：

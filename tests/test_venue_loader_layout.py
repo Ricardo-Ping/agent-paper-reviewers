@@ -27,6 +27,12 @@ def test_venue_loader_global_fallback_for_unknown_venue() -> None:
     assert used_fallback is True
     assert source == "fallback_global"
     assert profile.scoring_axes == ["novelty", "soundness", "experiment", "clarity"]
+    assert len(profile.required_checks) >= 8
+    assert "contribution_alignment" in profile.required_checks
+    assert "top_venue_related_work_coverage" in profile.required_checks
+    assert "baseline_coverage" in profile.required_check_specs
+    assert "statistical_significance" in profile.required_check_specs
+    assert profile.decision_policy.strictness_tier == "default_unknown_venue"
 
 
 def test_db_venues_include_database_specific_required_checks() -> None:
