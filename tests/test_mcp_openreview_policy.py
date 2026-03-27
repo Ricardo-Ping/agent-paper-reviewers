@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from agent_paper_reviewers.mcp.http_provider import HttpMCPToolProvider
+from agent_paper_reviewers.providers.http_provider import HttpMCPToolProvider
 
 
 class _FakeResponse:
@@ -73,7 +73,7 @@ def test_http_openreview_policy_extracts_real_fields(monkeypatch) -> None:
 
         return _FakeResponse(404, {})
 
-    monkeypatch.setattr("agent_paper_reviewers.mcp.http_provider.requests.get", fake_get)
+    monkeypatch.setattr("agent_paper_reviewers.providers.http_provider.requests.get", fake_get)
 
     provider = HttpMCPToolProvider(base_url="https://api2.openreview.net", token="fake-token")
     result = provider.resolve_openreview_policy("ICLR.cc/2026/Conference")
@@ -98,7 +98,7 @@ def test_http_openreview_policy_handles_forbidden_without_token_as_soft_fallback
     def fake_get(url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 10):
         return _FakeResponse(403, {})
 
-    monkeypatch.setattr("agent_paper_reviewers.mcp.http_provider.requests.get", fake_get)
+    monkeypatch.setattr("agent_paper_reviewers.providers.http_provider.requests.get", fake_get)
 
     provider = HttpMCPToolProvider(base_url="https://api2.openreview.net")
     result = provider.resolve_openreview_policy("ICLR.cc/2026/Conference")
@@ -111,7 +111,7 @@ def test_http_openreview_policy_handles_forbidden_with_token(monkeypatch) -> Non
     def fake_get(url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 10):
         return _FakeResponse(403, {})
 
-    monkeypatch.setattr("agent_paper_reviewers.mcp.http_provider.requests.get", fake_get)
+    monkeypatch.setattr("agent_paper_reviewers.providers.http_provider.requests.get", fake_get)
 
     provider = HttpMCPToolProvider(base_url="https://api2.openreview.net", token="fake-token")
     result = provider.resolve_openreview_policy("ICLR.cc/2026/Conference")
@@ -134,7 +134,7 @@ def test_http_openreview_policy_can_discover_group_by_venue(monkeypatch) -> None
             return _FakeResponse(200, {"notes": []})
         return _FakeResponse(404, {})
 
-    monkeypatch.setattr("agent_paper_reviewers.mcp.http_provider.requests.get", fake_get)
+    monkeypatch.setattr("agent_paper_reviewers.providers.http_provider.requests.get", fake_get)
 
     provider = HttpMCPToolProvider(base_url="https://api2.openreview.net", token="fake-token")
     result = provider.resolve_openreview_policy_by_venue("iclr", 2026)

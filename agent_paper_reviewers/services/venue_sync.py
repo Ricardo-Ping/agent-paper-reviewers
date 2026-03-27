@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from ..mcp.http_provider import HttpMCPToolProvider
+from ..providers.http_provider import HttpMCPToolProvider
 from ..models import VenueRuleSnapshot, VenueYearProfile
 from .venue_loader import (
     fallback_path,

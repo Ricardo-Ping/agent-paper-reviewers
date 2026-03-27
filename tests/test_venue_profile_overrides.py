@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from agent_paper_reviewers.mcp.base import MCPToolProvider, PolicyResolveResult
+from agent_paper_reviewers.providers.base import MCPToolProvider, PolicyResolveResult
 from agent_paper_reviewers.models import RebuttalPolicy, ReviewRunInput
 from agent_paper_reviewers.pipeline.base import PipelineContext
 from agent_paper_reviewers.pipeline.step_venue_profile import VenueProfileResolverStep

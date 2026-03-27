@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ..executors.base import ExecutorAdapter
 from ..models import TaskSpec
-from ..mcp.base import PolicyResolveResult
+from ..providers.base import PolicyResolveResult
 from ..services.venue_loader import load_venue_profile
 from .base import PipelineContext, PipelineStep
 

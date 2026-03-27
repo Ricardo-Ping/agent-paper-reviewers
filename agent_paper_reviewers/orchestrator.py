@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from .executors.base import ExecutorAdapter
 from .executors.factory import get_executor, validate_executor_readiness
-from .mcp.factory import get_mcp_provider
+from .providers.factory import get_mcp_provider
 from .models import ReviewRunInput, RunStatus, RunSummary
 from .pipeline import (
     ClaimEvidenceAlignerStep,

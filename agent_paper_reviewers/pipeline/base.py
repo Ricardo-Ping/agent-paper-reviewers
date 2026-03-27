@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from ..models import ReviewRunInput, RunStatus
 
 if TYPE_CHECKING:
-    from ..mcp.base import MCPToolProvider
+    from ..providers.base import MCPToolProvider
 
 
 @dataclass
