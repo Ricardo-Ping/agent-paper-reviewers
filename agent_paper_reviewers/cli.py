@@ -153,6 +153,8 @@ def _build_ai_summary_payload(summary, run_dir: Path) -> dict:
     run_guide_path = run_dir / "RUN_GUIDE.en.md"
     student_brief_path = run_dir / "STUDENT_BRIEF.en.md"
     persona_playbook_path = run_dir / "PERSONA_PLAYBOOK.en.md"
+    chat_summary_path = run_dir / "CHAT_SUMMARY.en.md"
+    chat_rebuttal_path = run_dir / "CHAT_REBUTTAL.en.md"
     agent_handoff_path = run_dir / "AGENT_HANDOFF.json"
 
     def _rel(path: Path | None) -> str | None:
@@ -273,6 +275,8 @@ def _build_ai_summary_payload(summary, run_dir: Path) -> dict:
             "run_guide": _rel(run_guide_path),
             "student_brief": _rel(student_brief_path),
             "persona_playbook": _rel(persona_playbook_path),
+            "chat_summary": _rel(chat_summary_path),
+            "chat_rebuttal": _rel(chat_rebuttal_path),
             "student_pack_decision": _rel(student_pack_decision),
             "student_pack_actions": (
                 _rel(run_dir / "student_pack" / "en" / "002-action-items.md")
@@ -287,11 +291,15 @@ def _build_ai_summary_payload(summary, run_dir: Path) -> dict:
             "agent_first": [
                 "AGENT_HANDOFF.json",
                 "ai_summary.json",
+                "CHAT_SUMMARY.en.md",
+                "CHAT_REBUTTAL.en.md",
                 "RUN_GUIDE.en.md",
                 "PERSONA_PLAYBOOK.en.md",
             ],
             "student_first": [
                 "STUDENT_BRIEF.en.md",
+                "CHAT_SUMMARY.en.md",
+                "CHAT_REBUTTAL.en.md",
                 "PERSONA_PLAYBOOK.en.md",
                 "student_pack/en/001-submission-decision.md",
                 "student_pack/en/002-action-items.md",

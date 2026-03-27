@@ -64,7 +64,7 @@
         "ai_summary": "boolean",
         "strict_quality": "boolean"
       },
-      "output": "full report artifacts + ai_summary.json + AGENT_HANDOFF.json + PERSONA_PLAYBOOK.*.md + STUDENT_BRIEF.*.md",
+      "output": "full report artifacts + ai_summary.json + AGENT_HANDOFF.json + STUDENT_BRIEF.*.md + CHAT_SUMMARY.*.md + CHAT_REBUTTAL.*.md + PERSONA_PLAYBOOK.*.md",
       "internal_llm": true
     },
     {
@@ -81,7 +81,7 @@
         "reviewer_comment": "repeatable string (R1::concern or plain text)",
         "strict_quality": "boolean"
       },
-      "output": "full report artifacts + ai_summary.json + generated_input.json + AGENT_HANDOFF.json + PERSONA_PLAYBOOK.*.md + STUDENT_BRIEF.*.md",
+      "output": "full report artifacts + ai_summary.json + generated_input.json + AGENT_HANDOFF.json + STUDENT_BRIEF.*.md + CHAT_SUMMARY.*.md + CHAT_REBUTTAL.*.md + PERSONA_PLAYBOOK.*.md",
       "internal_llm": true
     }
   ],

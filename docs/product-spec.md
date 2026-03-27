@@ -209,11 +209,13 @@ Version: v1.0（与 `main` 当前实现对齐）
 1. `START_HERE.{md|en.md|zh.md}`：总入口，告诉用户先看哪 3 个文件。
 2. `RUN_GUIDE.{md|en.md|zh.md}`：运行状态、阻断项、下一步动作。
 3. `STUDENT_BRIEF.{md|en.md|zh.md}`：研究生极简执行摘要（Top 阻断 + 前 24 小时动作）。
-4. `PERSONA_PLAYBOOK.{md|en.md|zh.md}`：双人设执行手册（Agent 编排流 + 研究生改稿流）。
-5. `student_pack/en/001-submission-decision.md`：一页决策（是否投稿 + Top 阻断问题）。
-6. `student_pack/en/002-action-items.md`：可执行动作清单（优先级、证据锚点、工作量）。
-7. `student_pack/en/003-rebuttal-draft.md`：与风险映射的 rebuttal 草稿。
-8. 双语模式下同步生成 `student_pack/zh/*`。
+4. `CHAT_SUMMARY.{md|en.md|zh.md}`：人话版双语总结（问题->原因->修复->预期收益）。
+5. `CHAT_REBUTTAL.{md|en.md|zh.md}`：人话版双语 rebuttal 讲解（解释 R1/R2 是否模拟）。
+6. `PERSONA_PLAYBOOK.{md|en.md|zh.md}`：双人设执行手册（Agent 编排流 + 研究生改稿流）。
+7. `student_pack/en/001-submission-decision.md`：一页决策（是否投稿 + Top 阻断问题）。
+8. `student_pack/en/002-action-items.md`：可执行动作清单（优先级、证据锚点、工作量）。
+9. `student_pack/en/003-rebuttal-draft.md`：与风险映射的 rebuttal 草稿。
+10. 双语模式下同步生成 `student_pack/zh/*`。
 
 ### 7.2 主报告（完整视图）
 

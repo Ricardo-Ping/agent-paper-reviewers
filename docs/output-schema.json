@@ -23,6 +23,8 @@
         "START_HERE.{md|en.md|zh.md}",
         "RUN_GUIDE.{md|en.md|zh.md}",
         "STUDENT_BRIEF.{md|en.md|zh.md}",
+        "CHAT_SUMMARY.{md|en.md|zh.md}",
+        "CHAT_REBUTTAL.{md|en.md|zh.md}",
         "PERSONA_PLAYBOOK.{md|en.md|zh.md}",
         "student_pack/{en|zh}/001-submission-decision.md",
         "student_pack/{en|zh}/002-action-items.md",

@@ -262,6 +262,8 @@ Common environment variables:
 - `START_HERE.md`: quick entry that tells you which 3 files to read first.
 - `RUN_GUIDE.md`: run health + next actions (includes unblock guidance when needed).
 - `STUDENT_BRIEF.md`: compact execution brief (top blockers + first 24-hour actions).
+- `CHAT_SUMMARY.md`: plain-language issue summary (bilingual mirror), written as issue -> reason -> fix -> expected gain.
+- `CHAT_REBUTTAL.md`: plain-language rebuttal guide that explains whether `R1/R2...` are simulated IDs or your real reviewer comments.
 - `PERSONA_PLAYBOOK.md`: dual-persona runbook (agent orchestration path + student revision path).
 - `student_pack/en/001-submission-decision.md`: one-page submit/hold decision with top blockers.
 - `student_pack/en/002-action-items.md`: executable action list with anchors and effort hints.

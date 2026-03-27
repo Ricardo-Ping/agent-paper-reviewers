@@ -74,4 +74,6 @@ def test_ai_summary_payload_basic(tmp_path: Path) -> None:
     assert "key_files" in payload
     assert "persona_routes" in payload
     assert "persona_playbook" in payload["key_files"]
+    assert "chat_summary" in payload["key_files"]
+    assert "chat_rebuttal" in payload["key_files"]
     assert "minimal_checks" in payload["persona_routes"]

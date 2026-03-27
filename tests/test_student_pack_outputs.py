@@ -42,6 +42,10 @@ def test_student_pack_en_outputs_exist(tmp_path: Path) -> None:
     assert (run_dir / "STUDENT_BRIEF.en.md").exists()
     assert (run_dir / "PERSONA_PLAYBOOK.md").exists()
     assert (run_dir / "PERSONA_PLAYBOOK.en.md").exists()
+    assert (run_dir / "CHAT_SUMMARY.md").exists()
+    assert (run_dir / "CHAT_SUMMARY.en.md").exists()
+    assert (run_dir / "CHAT_REBUTTAL.md").exists()
+    assert (run_dir / "CHAT_REBUTTAL.en.md").exists()
     assert (run_dir / "AGENT_HANDOFF.json").exists()
     assert (run_dir / "student_pack" / "en" / "001-submission-decision.md").exists()
     assert (run_dir / "student_pack" / "en" / "002-action-items.md").exists()
@@ -62,6 +66,10 @@ def test_student_pack_zh_outputs_exist_when_bilingual(tmp_path: Path) -> None:
     assert (run_dir / "STUDENT_BRIEF.zh.md").exists()
     assert (run_dir / "PERSONA_PLAYBOOK.md").exists()
     assert (run_dir / "PERSONA_PLAYBOOK.zh.md").exists()
+    assert (run_dir / "CHAT_SUMMARY.md").exists()
+    assert (run_dir / "CHAT_SUMMARY.zh.md").exists()
+    assert (run_dir / "CHAT_REBUTTAL.md").exists()
+    assert (run_dir / "CHAT_REBUTTAL.zh.md").exists()
     assert (run_dir / "AGENT_HANDOFF.json").exists()
     assert (run_dir / "student_pack" / "zh" / "001-submission-decision.md").exists()
     assert (run_dir / "student_pack" / "zh" / "002-action-items.md").exists()
@@ -80,4 +88,3 @@ def test_student_pack_blocks_fallback_when_real_agent_missing(tmp_path: Path, mo
     text = str(excinfo.value)
     assert "executor backend validation failed" in text
     assert "`openai`" in text
-

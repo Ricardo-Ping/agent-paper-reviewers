@@ -263,6 +263,8 @@ output/<paper_title>/
 - `START_HERE.md`：总入口，告诉你先看哪 3 个文件。
 - `RUN_GUIDE.md`：运行状态 + 下一步建议（有阻断会直接给出解除方法）。
 - `STUDENT_BRIEF.md`：研究生极简执行摘要（Top 阻断 + 前 24 小时动作）。
+- `CHAT_SUMMARY.md`：人话版问题总结（中英双语镜像），按“问题-原因-修复-预期收益”解释。
+- `CHAT_REBUTTAL.md`：人话版 rebuttal 讲解稿，明确 `R1/R2...` 是模拟编号还是你提供的真实 reviewer。
 - `PERSONA_PLAYBOOK.md`：双人设执行手册（Agent 编排流 + 研究生改稿流）。
 - `student_pack/en/001-submission-decision.md`：一页决策（是否建议投稿 + Top 阻断问题）。
 - `student_pack/en/002-action-items.md`：可执行行动清单（按优先级、带证据锚点与实验工作量）。

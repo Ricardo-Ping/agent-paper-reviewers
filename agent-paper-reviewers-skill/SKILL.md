@@ -262,6 +262,8 @@ python -m agent_paper_reviewers.cli tool-format-student-pack --analysis-json age
 - `START_HERE.md`：总入口，告诉用户先看哪 3 个文件。
 - `RUN_GUIDE.md`：运行状态与下一步建议（阻断时会给出解除方法）。
 - `STUDENT_BRIEF.md`：研究生极简摘要（Top 阻断 + 前 24 小时动作）。
+- `CHAT_SUMMARY.md`：人话版双语总结（问题->原因->修复->收益），避免只看 RISK 编号。
+- `CHAT_REBUTTAL.md`：人话版双语 rebuttal 讲解稿，明确 R1/R2 是否模拟编号。
 - `PERSONA_PLAYBOOK.md`：双人设执行手册（Agent 编排流 + 研究生改稿流）。
 - `student_pack/en/001-submission-decision.md`：一页决策（是否建议投稿 + Top 阻断问题）。
 - `student_pack/en/002-action-items.md`：按优先级执行的行动清单（证据锚点 + 工作量）。
