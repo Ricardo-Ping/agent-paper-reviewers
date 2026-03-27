@@ -1,0 +1,107 @@
+{
+  "name": "agent-paper-reviewers",
+  "version": "1.1.0",
+  "mode": "skill-toolkit-agent-analysis",
+  "notes": [
+    "Main pipeline runs in pure skill mode.",
+    "Use local skill tools for extraction/formatting and let agent perform semantic analysis."
+  ],
+  "tools": [
+    {
+      "name": "tool-venue-profile",
+      "description": "Resolve venue scoring/check profile from local rule snapshots.",
+      "command": "python -m agent_paper_reviewers.cli tool-venue-profile --venue <venue> --year <year> --output <path>",
+      "args": {
+        "venue": "string",
+        "year": "number",
+        "output": "path"
+      },
+      "output": "venue_profile.json",
+      "internal_llm": false
+    },
+    {
+      "name": "tool-parse-paper",
+      "description": "Parse PDF/Markdown into structured sections/pages for downstream analysis.",
+      "command": "python -m agent_paper_reviewers.cli tool-parse-paper --paper-path <path> --paper-format auto --output <path>",
+      "args": {
+        "paper_path": "path",
+        "paper_format": "auto|pdf|md",
+        "output": "path"
+      },
+      "output": "parsed_paper.json",
+      "internal_llm": false
+    },
+    {
+      "name": "tool-format-template",
+      "description": "Emit the analysis payload contract used by tool-format-student-pack.",
+      "command": "python -m agent_paper_reviewers.cli tool-format-template --template student_pack_analysis --output <path>",
+      "args": {
+        "template": "student_pack_analysis",
+        "output": "path"
+      },
+      "output": "analysis_template.json",
+      "internal_llm": false
+    },
+    {
+      "name": "tool-format-student-pack",
+      "description": "Format agent-authored analysis payload into 3 student-facing markdown files.",
+      "command": "python -m agent_paper_reviewers.cli tool-format-student-pack --analysis-json <path> --output-dir <dir> --language en",
+      "args": {
+        "analysis_json": "path",
+        "output_dir": "path",
+        "language": "en|zh"
+      },
+      "output": "001-submission-decision.md, 002-action-items.md, 003-rebuttal-draft.md",
+      "internal_llm": false
+    },
+    {
+      "name": "run",
+      "description": "Run full built-in pipeline end-to-end.",
+      "command": "python -m agent_paper_reviewers.cli run --input <input.json> --output-dir <dir> --ai-summary",
+      "args": {
+        "input": "path",
+        "output_dir": "path",
+        "ai_summary": "boolean"
+      },
+      "output": "full report artifacts + ai_summary.json",
+      "internal_llm": true
+    }
+  ],
+  "high_level_commands": {
+    "agent-first-review": {
+      "description": "Agent handles semantic analysis, skill handles extraction and formatting.",
+      "steps": [
+        "tool-parse-paper",
+        "tool-venue-profile",
+        "tool-format-template",
+        "agent-analyze-paper",
+        "tool-format-student-pack"
+      ]
+    },
+    "full-review": {
+      "description": "Use built-in pipeline for one-shot execution.",
+      "steps": [
+        "run"
+      ]
+    }
+  },
+  "pipeline_steps_full_run": [
+    "Intake",
+    "VenueProfileResolver",
+    "PaperParser",
+    "ClaimDiscoverer",
+    "ClaimNormalizer",
+    "EvidenceIndexer",
+    "ClaimEvidenceAligner",
+    "CitationGraph",
+    "GapDetector",
+    "VenueRecommender",
+    "RiskRanker",
+    "ReviewerQuestionSimulator",
+    "RemediationPlanner",
+    "RebuttalComposer",
+    "PaperQAGate",
+    "ReportBuilder",
+    "ExporterAndQAGate"
+  ]
+}

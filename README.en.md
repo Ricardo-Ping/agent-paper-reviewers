@@ -43,9 +43,9 @@ The unique value here is an executable loop: risk detection -> evidence alignmen
 
 ## Architecture
 - Skill-driven flow: ordered by `agent-paper-reviewers-skill/flow_config.yaml`.
-- MCP capabilities: concrete tool capabilities are injected via MCP providers.
+- Pure skill runtime: the main flow uses local rules and skill tools.
 - Pluggable executors: `codex|agent_api|openai|anthropic|qwen|local_vllm`.
-- Unknown-venue fallback chain: local `_fallback` rule -> OpenReview dynamic discovery -> executor bootstrap draft.
+- Unknown-venue fallback chain: local `_fallback` rule -> executor bootstrap draft.
 
 ## Recommended Mode (Agent Analysis + Skill Toolkit)
 Use this project as a toolkit layer, and let your preferred agent handle semantic reasoning.
@@ -68,6 +68,10 @@ python -m agent_paper_reviewers.cli tool-format-template --template student_pack
 # 4) Format agent analysis to 3 student-facing markdown files
 python -m agent_paper_reviewers.cli tool-format-student-pack --analysis-json agent_analysis.json --output-dir output/student_pack/en --language en
 ```
+
+The skill folder also ships a machine-readable capability list:
+- `agent-paper-reviewers-skill/manifest.json`
+- Recommended: let your agent read this manifest first, then decide which commands to call.
 
 Compatibility: the full `run --input ...` pipeline is still available for one-shot runs.
 
@@ -134,6 +138,8 @@ conda install -n agent-paper-reviewers-gpu -c conda-forge pandoc tectonic
 ## Quick start
 ```bash
 python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output
+# Add machine-friendly concise summary for agent consumption:
+python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output --ai-summary
 ```
 
 Note:
@@ -191,7 +197,6 @@ Rerun on the same paper title overwrites that folder.
 - `constraints`: time/GPU/experiment boundaries.
 - `options.language_mode`: `en` or `en_zh`.
 - `options.executor_backend`: executor backend.
-- `options.mcp_backend`: `http` or `disabled`.
 - `options.always_export_pdf`: whether to export PDFs (default `false`, only `md+json` by default).
 - `profile.author_hash` / `profile.author_id`: optional author identity for historical weakness profiling (`author_id` is hashed locally).
   - If no author identity is provided, the system still accumulates profile statistics at `venue+year` scope.
@@ -257,7 +262,7 @@ This `student_pack` is the human-readable default workflow. The other JSON/inter
 - `venue_profile_used.json`
   - Includes `required_check_specs` (executable thresholds) and `source/source_notes` (rule provenance chain).
 - `skill_flow_used.json`
-- `mcp_runtime.json`
+- `runtime_context.json` (runtime capability context; currently `local_skill_tools_only`)
 - `pipeline_steps.json` (step-by-step execution trace with success/failed/skipped)
 - `run_summary.json`
 - `run_result.json` (full run object with per-step `success/failed/skipped`, `failed_step`, and produced artifact list)

@@ -23,7 +23,6 @@ def _build_input(tmp_path: Path, language_mode: str) -> ReviewRunInput:
                 "language_mode": language_mode,
                 "executor_backend": "local_vllm",
                 "always_export_pdf": False,
-                "mcp_backend": "disabled",
             },
         }
     )

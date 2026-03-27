@@ -10,7 +10,7 @@ Deliverables (always):
 - remediation_plan.json
 - venue_profile_used.json
 - skill_flow_used.json
-- mcp_runtime.json
+- runtime_context.json
 
 Deliverables (optional):
 - decision_brief.<lang>.pdf

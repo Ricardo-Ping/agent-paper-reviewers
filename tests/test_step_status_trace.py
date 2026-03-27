@@ -24,7 +24,6 @@ def test_run_result_records_step_statuses_on_success(tmp_path: Path) -> None:
         "options": {
             "language_mode": "en",
             "executor_backend": "local_vllm",
-            "mcp_backend": "disabled",
             "always_export_pdf": False,
         },
     }
@@ -51,7 +50,6 @@ def test_run_result_records_failed_and_skipped_steps(tmp_path: Path) -> None:
         "options": {
             "language_mode": "en",
             "executor_backend": "local_vllm",
-            "mcp_backend": "disabled",
             "always_export_pdf": False,
         },
     }

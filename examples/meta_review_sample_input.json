@@ -1,37 +1,40 @@
 {
-  "paper": {
-    "format": "md",
-    "path": "sample_paper.md"
-  },
-  "venue": {
-    "name": "ICLR",
-    "year": 2026
-  },
-  "claims": [],
-  "review_context": {
-    "manuscript_stage": "meta_review_discussion",
-    "reviewer_comments": [
-      {
-        "review_id": "R1",
-        "concern": "Statistical significance is insufficiently reported."
-      },
-      {
-        "review_id": "R2",
-        "concern": "Baseline fairness is unclear."
-      }
-    ],
-    "note": "Discussion-stage sample."
-  },
-  "constraints": {
-    "time_days": 5,
-    "gpu_budget_hours": 30,
-    "max_new_experiments": 3,
-    "cannot_run": []
-  },
-  "options": {
-    "language_mode": "en",
-    "executor_backend": "local_vllm",
-    "mcp_backend": "http",
-    "always_export_pdf": false
-  }
+    "paper":  {
+                  "format":  "md",
+                  "path":  "sample_paper.md"
+              },
+    "venue":  {
+                  "name":  "ICLR",
+                  "year":  2026
+              },
+    "claims":  [
+
+               ],
+    "review_context":  {
+                           "manuscript_stage":  "meta_review_discussion",
+                           "reviewer_comments":  [
+                                                     {
+                                                         "review_id":  "R1",
+                                                         "concern":  "Statistical significance is insufficiently reported."
+                                                     },
+                                                     {
+                                                         "review_id":  "R2",
+                                                         "concern":  "Baseline fairness is unclear."
+                                                     }
+                                                 ],
+                           "note":  "Discussion-stage sample."
+                       },
+    "constraints":  {
+                        "time_days":  5,
+                        "gpu_budget_hours":  30,
+                        "max_new_experiments":  3,
+                        "cannot_run":  [
+
+                                       ]
+                    },
+    "options":  {
+                    "language_mode":  "en",
+                    "executor_backend":  "local_vllm",
+                    "always_export_pdf":  false
+                }
 }

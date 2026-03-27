@@ -10,7 +10,6 @@ from uuid import uuid4
 
 from .executors.base import ExecutorAdapter
 from .executors.factory import get_executor, validate_executor_readiness
-from .providers.factory import get_mcp_provider
 from .models import ReviewRunInput, RunStatus, RunSummary
 from .pipeline import (
     ClaimEvidenceAlignerStep,
@@ -58,7 +57,6 @@ class ReviewOrchestrator:
             )
 
         executor = get_executor(input_data.options.executor_backend)
-        mcp_tools = get_mcp_provider(input_data.options.mcp_backend)
         translator = Translator(executor)
         flow_profile = load_skill_flow(self.repo_root)
 
@@ -71,9 +69,7 @@ class ReviewOrchestrator:
             run_dir=run_dir,
             input_data=input_data,
             repo_root=self.repo_root,
-            mcp_tools=mcp_tools,
         )
-
         historical_prior = load_historical_profile_prior(self.repo_root, input_data)
         ctx.artifacts["historical_profile_prior"] = historical_prior
         ctx.dump_json("artifacts/historical_profile_prior.json", historical_prior)
@@ -86,17 +82,16 @@ class ReviewOrchestrator:
             "source": flow_profile.source,
             "steps": flow_profile.steps,
             "warnings": flow_profile.warnings,
-            "mcp_capabilities": flow_profile.mcp_capabilities,
         }
-        mcp_runtime_payload = {
-            "backend": input_data.options.mcp_backend.value,
-            "provider": mcp_tools.name,
-            "capabilities": mcp_tools.capabilities(),
+        runtime_context_payload = {
+            "mode": "local_skill_tools_only",
+            "rules_source": "local_venue_rules",
+            "notes": ["Runtime uses local skill tools only."],
         }
         ctx.artifacts["skill_flow"] = skill_flow_payload
-        ctx.artifacts["mcp_runtime"] = mcp_runtime_payload
+        ctx.artifacts["runtime_context"] = runtime_context_payload
         ctx.dump_json("artifacts/skill_flow_used.json", skill_flow_payload)
-        ctx.dump_json("artifacts/mcp_runtime.json", mcp_runtime_payload)
+        ctx.dump_json("artifacts/runtime_context.json", runtime_context_payload)
 
         step_statuses = self._init_step_statuses(flow_profile.steps)
         ctx.step_statuses = step_statuses

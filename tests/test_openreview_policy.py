@@ -1,8 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
-from agent_paper_reviewers.providers.http_provider import HttpMCPToolProvider
+from agent_paper_reviewers.services.venue_sync import OpenReviewPolicyResolver
 
 
 class _FakeResponse:
@@ -14,7 +14,7 @@ class _FakeResponse:
         return self._payload
 
 
-def test_http_openreview_policy_extracts_real_fields(monkeypatch) -> None:
+def test_openreview_policy_extracts_real_fields(monkeypatch) -> None:
     def fake_get(url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 10):
         if url.endswith("/groups"):
             return _FakeResponse(
@@ -44,7 +44,6 @@ def test_http_openreview_policy_extracts_real_fields(monkeypatch) -> None:
                     ]
                 },
             )
-
         if url.endswith("/invitations") and params and params.get("prefix"):
             return _FakeResponse(
                 200,
@@ -52,31 +51,19 @@ def test_http_openreview_policy_extracts_real_fields(monkeypatch) -> None:
                     "invitations": [
                         {
                             "id": "ICLR.cc/2026/Conference/-/Author_Response",
-                            "reply": {
-                                "content": {
-                                    "response": {
-                                        "value": {
-                                            "param": {
-                                                "maxLength": 5000,
-                                            }
-                                        }
-                                    }
-                                }
-                            },
+                            "reply": {"content": {"response": {"value": {"param": {"maxLength": 5000}}}}},
                         }
                     ]
                 },
             )
-
         if url.endswith("/invitations") and params and params.get("invitee"):
             return _FakeResponse(200, {"invitations": []})
-
         return _FakeResponse(404, {})
 
-    monkeypatch.setattr("agent_paper_reviewers.providers.http_provider.requests.get", fake_get)
+    monkeypatch.setattr("agent_paper_reviewers.services.venue_sync.requests.get", fake_get)
 
-    provider = HttpMCPToolProvider(base_url="https://api2.openreview.net", token="fake-token")
-    result = provider.resolve_openreview_policy("ICLR.cc/2026/Conference")
+    resolver = OpenReviewPolicyResolver(base_url="https://api2.openreview.net", token="fake-token")
+    result = resolver.resolve_policy("ICLR.cc/2026/Conference")
 
     assert result.policy is not None
     assert result.policy.per_review_char_limit == 5000
@@ -94,34 +81,34 @@ def test_http_openreview_policy_extracts_real_fields(monkeypatch) -> None:
     assert (result.warning or "") != "policy_not_extracted_use_fallback"
 
 
-def test_http_openreview_policy_handles_forbidden_without_token_as_soft_fallback(monkeypatch) -> None:
+def test_openreview_policy_handles_forbidden_without_token_as_soft_fallback(monkeypatch) -> None:
     def fake_get(url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 10):
         return _FakeResponse(403, {})
 
-    monkeypatch.setattr("agent_paper_reviewers.providers.http_provider.requests.get", fake_get)
+    monkeypatch.setattr("agent_paper_reviewers.services.venue_sync.requests.get", fake_get)
 
-    provider = HttpMCPToolProvider(base_url="https://api2.openreview.net")
-    result = provider.resolve_openreview_policy("ICLR.cc/2026/Conference")
+    resolver = OpenReviewPolicyResolver(base_url="https://api2.openreview.net")
+    result = resolver.resolve_policy("ICLR.cc/2026/Conference")
 
     assert result.policy is None
     assert result.warning is None
 
 
-def test_http_openreview_policy_handles_forbidden_with_token(monkeypatch) -> None:
+def test_openreview_policy_handles_forbidden_with_token(monkeypatch) -> None:
     def fake_get(url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 10):
         return _FakeResponse(403, {})
 
-    monkeypatch.setattr("agent_paper_reviewers.providers.http_provider.requests.get", fake_get)
+    monkeypatch.setattr("agent_paper_reviewers.services.venue_sync.requests.get", fake_get)
 
-    provider = HttpMCPToolProvider(base_url="https://api2.openreview.net", token="fake-token")
-    result = provider.resolve_openreview_policy("ICLR.cc/2026/Conference")
+    resolver = OpenReviewPolicyResolver(base_url="https://api2.openreview.net", token="fake-token")
+    result = resolver.resolve_policy("ICLR.cc/2026/Conference")
 
     assert result.policy is None
     assert result.warning is not None
     assert "openreview_forbidden_with_token" in result.warning
 
 
-def test_http_openreview_policy_can_discover_group_by_venue(monkeypatch) -> None:
+def test_openreview_policy_can_discover_group_by_venue(monkeypatch) -> None:
     def fake_get(url: str, params: dict | None = None, headers: dict | None = None, timeout: int = 10):
         if url.endswith("/groups"):
             group_id = (params or {}).get("id", "")
@@ -134,8 +121,8 @@ def test_http_openreview_policy_can_discover_group_by_venue(monkeypatch) -> None
             return _FakeResponse(200, {"notes": []})
         return _FakeResponse(404, {})
 
-    monkeypatch.setattr("agent_paper_reviewers.providers.http_provider.requests.get", fake_get)
+    monkeypatch.setattr("agent_paper_reviewers.services.venue_sync.requests.get", fake_get)
 
-    provider = HttpMCPToolProvider(base_url="https://api2.openreview.net", token="fake-token")
-    result = provider.resolve_openreview_policy_by_venue("iclr", 2026)
+    resolver = OpenReviewPolicyResolver(base_url="https://api2.openreview.net", token="fake-token")
+    result = resolver.resolve_policy_by_venue("iclr", 2026)
     assert result.resolved_group_id == "ICLR.cc/2026/Conference"

@@ -1,28 +1,28 @@
-﻿{
-  "paper": {
-    "format": "pdf",
-    "path": "path/to/your-paper.pdf"
-  },
-  "venue": {
-    "name": "ICLR",
-    "year": 2026
-  },
-  "claims": [
-    "The proposed LLM-based system improves SQL dialect translation quality across multiple dialect pairs.",
-    "The method demonstrates stronger generalization than prior translation baselines.",
-    "The system reduces manual effort compared with rule-heavy SQL dialect conversion pipelines."
-  ],
-  "constraints": {
-    "time_days": 10,
-    "gpu_budget_hours": 80,
-    "max_new_experiments": 6,
-    "cannot_run": []
-  },
-  "options": {
-    "language_mode": "en_zh",
-    "executor_backend": "local_vllm",
-    "mcp_backend": "http",
-    "always_export_pdf": false
-  }
-}
+{
+    "paper":  {
+                  "format":  "pdf",
+                  "path":  "path/to/your-paper.pdf"
+              },
+    "venue":  {
+                  "name":  "ICLR",
+                  "year":  2026
+              },
+    "claims":  [
+                   "The proposed LLM-based system improves SQL dialect translation quality across multiple dialect pairs.",
+                   "The method demonstrates stronger generalization than prior translation baselines.",
+                   "The system reduces manual effort compared with rule-heavy SQL dialect conversion pipelines."
+               ],
+    "constraints":  {
+                        "time_days":  10,
+                        "gpu_budget_hours":  80,
+                        "max_new_experiments":  6,
+                        "cannot_run":  [
 
+                                       ]
+                    },
+    "options":  {
+                    "language_mode":  "en_zh",
+                    "executor_backend":  "local_vllm",
+                    "always_export_pdf":  false
+                }
+}

@@ -42,7 +42,7 @@
         "venue_recommendations.json",
         "venue_profile_used.json",
         "skill_flow_used.json",
-        "mcp_runtime.json",
+        "runtime_context.json",
         "feedback_template.json",
         "run_summary.json",
         "run_result.json",
@@ -67,7 +67,6 @@
       "type": "string",
       "enum": ["codex", "agent_api", "openai", "anthropic", "qwen", "local_vllm"]
     },
-    "MCPBackend": { "type": "string", "enum": ["http", "disabled"] },
     "RunStatus": { "type": "string", "enum": ["success", "partial_failed", "failed"] },
     "StepState": { "type": "string", "enum": ["pending", "running", "success", "failed", "skipped"] },
     "ManuscriptStage": {
@@ -110,7 +109,6 @@
       "properties": {
         "language_mode": { "$ref": "#/$defs/LanguageMode" },
         "executor_backend": { "$ref": "#/$defs/ExecutorBackend" },
-        "mcp_backend": { "$ref": "#/$defs/MCPBackend" },
         "always_export_pdf": { "type": "boolean", "default": false }
       },
       "additionalProperties": false
@@ -588,22 +586,21 @@
     },
     "SkillFlowUsedJson": {
       "type": "object",
-      "required": ["source", "steps", "warnings", "mcp_capabilities"],
+      "required": ["source", "steps", "warnings"],
       "properties": {
         "source": { "type": "string" },
         "steps": { "type": "array", "items": { "type": "string" } },
-        "warnings": { "type": "array", "items": { "type": "string" } },
-        "mcp_capabilities": { "type": "object" }
+        "warnings": { "type": "array", "items": { "type": "string" } }
       },
       "additionalProperties": true
     },
-    "MCPRuntimeJson": {
+    "RuntimeContextJson": {
       "type": "object",
-      "required": ["backend", "provider", "capabilities"],
+      "required": ["mode", "rules_source", "notes"],
       "properties": {
-        "backend": { "type": "string" },
-        "provider": { "type": "string" },
-        "capabilities": { "type": "object" }
+        "mode": { "type": "string" },
+        "rules_source": { "type": "string" },
+        "notes": { "type": "array", "items": { "type": "string" } }
       },
       "additionalProperties": true
     },
@@ -644,7 +641,7 @@
         "venue_recommendations",
         "venue_profile_used",
         "skill_flow_used",
-        "mcp_runtime",
+        "runtime_context",
         "feedback_template",
         "run_summary",
         "pipeline_steps",
@@ -666,7 +663,7 @@
         "venue_recommendations": { "$ref": "#/$defs/VenueRecommendationsJson" },
         "venue_profile_used": { "$ref": "#/$defs/VenueProfileUsedJson" },
         "skill_flow_used": { "$ref": "#/$defs/SkillFlowUsedJson" },
-        "mcp_runtime": { "$ref": "#/$defs/MCPRuntimeJson" },
+        "runtime_context": { "$ref": "#/$defs/RuntimeContextJson" },
         "feedback_template": { "$ref": "#/$defs/FeedbackTemplateJson" },
         "run_summary": { "$ref": "#/$defs/RunSummary" },
         "pipeline_steps": { "$ref": "#/$defs/PipelineStepsJson" },

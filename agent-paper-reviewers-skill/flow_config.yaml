@@ -20,7 +20,4 @@ pipeline_steps:
   - ReportBuilder
   - ExporterAndQAGate
 
-mcp_capabilities:
-  openreview_policy_resolver: true
-
 

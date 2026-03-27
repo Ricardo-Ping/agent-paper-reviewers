@@ -7,7 +7,7 @@ from agent_paper_reviewers.models import ReviewRunInput
 from agent_paper_reviewers.orchestrator import ReviewOrchestrator
 
 
-def test_skill_flow_and_mcp_runtime_outputs(tmp_path: Path) -> None:
+def test_skill_flow_and_runtime_context_outputs(tmp_path: Path) -> None:
     paper = tmp_path / "paper.md"
     paper.write_text(
         "# Title\n\n## Abstract\nA.\n\n## Method\nB.\n\n## Experiments\nC.\n\n## Limitations\nD.",
@@ -21,7 +21,6 @@ def test_skill_flow_and_mcp_runtime_outputs(tmp_path: Path) -> None:
         "options": {
             "language_mode": "en",
             "executor_backend": "local_vllm",
-            "mcp_backend": "http",
             "always_export_pdf": False,
         },
     }
@@ -32,11 +31,14 @@ def test_skill_flow_and_mcp_runtime_outputs(tmp_path: Path) -> None:
     run_dir = Path(summary.output_dir)
 
     skill_flow = json.loads((run_dir / "skill_flow_used.json").read_text(encoding="utf-8"))
-    mcp_runtime = json.loads((run_dir / "mcp_runtime.json").read_text(encoding="utf-8"))
+    runtime_context = json.loads((run_dir / "runtime_context.json").read_text(encoding="utf-8"))
 
     assert "VenueProfileResolver" in skill_flow["steps"]
-    assert mcp_runtime["provider"] in {"http_mcp", "noop_mcp"}
-    assert "openreview_policy_resolver" in mcp_runtime["capabilities"]
+    assert "source" in skill_flow
+    assert runtime_context["mode"] == "local_skill_tools_only"
+    assert runtime_context["rules_source"] == "local_venue_rules"
+    assert "notes" in runtime_context
+    assert not (run_dir / "mcp_runtime.json").exists()
 
 
 

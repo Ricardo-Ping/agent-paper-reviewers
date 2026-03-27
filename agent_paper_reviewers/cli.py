@@ -134,6 +134,81 @@ def _pdf_parse_quality_warnings(
     return warnings
 
 
+def _safe_read_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:  # noqa: BLE001
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _build_ai_summary_payload(summary, run_dir: Path) -> dict:
+    decision = _safe_read_json(run_dir / "decision_brief.en.json")
+    risk = _safe_read_json(run_dir / "artifacts" / "risk_ranking.json")
+    rebuttal_path = run_dir / "rebuttal.en.md"
+
+    top_risks: list[dict] = []
+    must_fix: list[str] = []
+    risks = risk.get("risks", [])
+    if isinstance(risks, list):
+        for row in risks[:5]:
+            if not isinstance(row, dict):
+                continue
+            rid = str(row.get("id", "")).strip() or "RISK-?"
+            severity = str(row.get("severity", "P2")).strip().upper()
+            score = float(row.get("score", 0.0) or 0.0)
+            blocking = severity in {"P0", "P1"}
+            top_risks.append(
+                {
+                    "id": rid,
+                    "severity": severity,
+                    "score": round(score, 3),
+                    "concern": str(row.get("reason", "")).strip(),
+                    "blocking": blocking,
+                }
+            )
+        must_fix = [x["id"] for x in top_risks if x["blocking"]]
+
+    decision_text = str(decision.get("decision", summary.status.value)).strip() or summary.status.value
+    interp = str(decision.get("decision_interpretation", "")).strip()
+    verdict = f"{decision_text}: {interp}" if interp else decision_text
+
+    fallback_count = 0
+    if isinstance(risks, list):
+        for row in risks:
+            if not isinstance(row, dict):
+                continue
+            source = str(row.get("generation_source", "")).lower()
+            if "fallback" in source:
+                fallback_count += 1
+
+    qa_penalty = 0.0
+    for q in summary.qa_issues:
+        ql = str(q).lower()
+        if "pdf_parse_quality" in ql:
+            qa_penalty += 0.08
+        elif "warning" in ql:
+            qa_penalty += 0.02
+        elif "error" in ql:
+            qa_penalty += 0.04
+
+    confidence = 0.92 - (0.06 * fallback_count) - qa_penalty
+    confidence = max(0.2, min(0.95, round(confidence, 3)))
+
+    return {
+        "run_id": summary.run_id,
+        "status": summary.status.value,
+        "verdict": verdict,
+        "top_risks": top_risks,
+        "must_fix_before_submit": must_fix,
+        "rebuttal_ready": str(rebuttal_path) if rebuttal_path.exists() else None,
+        "confidence": confidence,
+        "qa_issue_count": len(summary.qa_issues),
+    }
+
+
 @app.command("doctor")
 def doctor(
     as_json: bool = typer.Option(
@@ -240,6 +315,11 @@ def doctor(
 def run_pipeline(
     input: Path = typer.Option(..., "--input", help="Path to run input json"),
     output_dir: Path = typer.Option(Path("output"), "--output-dir", help="Output root directory"),
+    ai_summary: bool = typer.Option(
+        False,
+        "--ai-summary",
+        help="Write ai_summary.json (machine-readable concise verdict) into run output dir.",
+    ),
 ) -> None:
     from .orchestrator import ReviewOrchestrator
 
@@ -262,6 +342,12 @@ def run_pipeline(
         console.print("qa_issues:")
         for item in summary.qa_issues:
             console.print(f"- {item}")
+    if ai_summary:
+        run_dir = Path(summary.output_dir)
+        payload = _build_ai_summary_payload(summary, run_dir)
+        summary_path = run_dir / "ai_summary.json"
+        summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"ai_summary: {summary_path}")
 
 
 @app.command("tool-venue-profile")

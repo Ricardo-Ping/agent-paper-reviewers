@@ -1,32 +1,34 @@
-﻿{
-  "paper": {
-    "format": "pdf",
-    "path": "path/to/your-paper.pdf"
-  },
-  "venue": {
-    "name": "ICLR",
-    "year": 2026
-  },
-  "claims": [
-    "Claim 1: your core contribution.",
-    "Claim 2: your strongest empirical result."
-  ],
-  "review_context": {
-    "manuscript_stage": "initial_submission",
-    "reviewer_comments": [],
-    "note": ""
-  },
-  "constraints": {
-    "time_days": 10,
-    "gpu_budget_hours": 80,
-    "max_new_experiments": 6,
-    "cannot_run": []
-  },
-  "options": {
-    "language_mode": "en_zh",
-    "executor_backend": "codex",
-    "mcp_backend": "http",
-    "always_export_pdf": false
-  }
-}
+{
+    "paper":  {
+                  "format":  "pdf",
+                  "path":  "path/to/your-paper.pdf"
+              },
+    "venue":  {
+                  "name":  "ICLR",
+                  "year":  2026
+              },
+    "claims":  [
+                   "Claim 1: your core contribution.",
+                   "Claim 2: your strongest empirical result."
+               ],
+    "review_context":  {
+                           "manuscript_stage":  "initial_submission",
+                           "reviewer_comments":  [
 
+                                                 ],
+                           "note":  ""
+                       },
+    "constraints":  {
+                        "time_days":  10,
+                        "gpu_budget_hours":  80,
+                        "max_new_experiments":  6,
+                        "cannot_run":  [
+
+                                       ]
+                    },
+    "options":  {
+                    "language_mode":  "en_zh",
+                    "executor_backend":  "codex",
+                    "always_export_pdf":  false
+                }
+}

@@ -31,7 +31,6 @@ class SkillFlowProfile:
     steps: list[str]
     source: str
     warnings: list[str]
-    mcp_capabilities: dict[str, bool]
 
 
 def load_skill_flow(repo_root: Path) -> SkillFlowProfile:
@@ -41,7 +40,6 @@ def load_skill_flow(repo_root: Path) -> SkillFlowProfile:
             steps=list(DEFAULT_STEP_ORDER),
             source="default",
             warnings=["skill_flow_missing_use_default"],
-            mcp_capabilities={"openreview_policy_resolver": True},
         )
 
     try:
@@ -51,11 +49,9 @@ def load_skill_flow(repo_root: Path) -> SkillFlowProfile:
             steps=list(DEFAULT_STEP_ORDER),
             source=str(path),
             warnings=[f"skill_flow_parse_error:{exc}"],
-            mcp_capabilities={"openreview_policy_resolver": True},
         )
 
     configured_steps = raw.get("pipeline_steps")
-    mcp_capabilities = raw.get("mcp_capabilities") or {"openreview_policy_resolver": True}
     warnings: list[str] = []
 
     if not isinstance(configured_steps, list) or not all(isinstance(x, str) for x in configured_steps):
@@ -64,7 +60,6 @@ def load_skill_flow(repo_root: Path) -> SkillFlowProfile:
             steps=list(DEFAULT_STEP_ORDER),
             source=str(path),
             warnings=warnings,
-            mcp_capabilities=mcp_capabilities,
         )
 
     unknown = [step for step in configured_steps if step not in DEFAULT_STEP_ORDER]
@@ -83,14 +78,12 @@ def load_skill_flow(repo_root: Path) -> SkillFlowProfile:
             steps=list(DEFAULT_STEP_ORDER),
             source=str(path),
             warnings=warnings,
-            mcp_capabilities=mcp_capabilities,
         )
 
     return SkillFlowProfile(
         steps=configured_steps,
         source=str(path),
         warnings=[],
-        mcp_capabilities=mcp_capabilities,
     )
 
 

@@ -42,9 +42,9 @@
 
 ## 架构思路
 - Skill 驱动流程：流程顺序由 `agent-paper-reviewers-skill/flow_config.yaml` 定义。
-- MCP 提供工具能力：例如 OpenReview 规则解析能力通过 MCP provider 注入。
+- 纯 Skill 运行时：主流程使用本地规则与工具链。
 - Executor 可插拔：支持 `codex|agent_api|openai|anthropic|qwen|local_vllm`。
-- 未知会议自动降级：本地 `_fallback` 规则 -> OpenReview 动态发现 -> executor 自举规则草案（三层回退）。
+- 未知会议自动降级：本地 `_fallback` 规则 -> executor 自举规则草案。
 
 ## 推荐工作方式（Agent 分析 + Skill 工具库）
 现在推荐把本项目当成“工具层”，而不是强绑定单一内置分析逻辑：
@@ -69,6 +69,10 @@ python -m agent_paper_reviewers.cli tool-format-template --template student_pack
 # 4) 把 Agent 的分析结果格式化为 3 份研究生可读文档
 python -m agent_paper_reviewers.cli tool-format-student-pack --analysis-json agent_analysis.json --output-dir output/student_pack/en --language en
 ```
+
+此外，Skill 目录下提供了机器可读能力清单：
+- `agent-paper-reviewers-skill/manifest.json`
+- 建议 Agent 先读取 manifest 再决定调用路径。
 
 兼容说明：`run --input ...` 的全流程模式仍然保留，适合一键跑通；上面是更推荐的“Agent 主导分析”模式。
 
@@ -141,6 +145,8 @@ conda install -n agent-paper-reviewers-gpu -c conda-forge pandoc tectonic
 ## 5 分钟跑通
 ```bash
 python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output
+# 如果你希望给 Agent 一个简洁机器摘要：
+python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output --ai-summary
 ```
 
 说明：
@@ -198,7 +204,6 @@ output/<paper_title>/
 - `constraints`: 时间、GPU、最多补实验数等资源边界。
 - `options.language_mode`: `en` 或 `en_zh`。
 - `options.executor_backend`: 执行器后端。
-- `options.mcp_backend`: `http` 或 `disabled`。
 - `options.always_export_pdf`: 是否导出 PDF（默认 `false`，仅输出 `md+json`）。
 - `profile.author_hash` / `profile.author_id`: 可选投稿者标识（用于历史画像累计；`author_id` 会在本地转 hash）。
   - 未提供作者标识时，系统仍会按 `venue+year` 累计公共弱项画像。
@@ -264,7 +269,7 @@ output/<paper_title>/
 - `venue_profile_used.json`: 本次运行使用的会议规则快照。
   - 包含 `required_check_specs`（可执行阈值）、`source/source_notes`（规则来源链路）。
 - `skill_flow_used.json`: 本次实际执行的 Skill 流程。
-- `mcp_runtime.json`: 本次 MCP backend/provider 与能力开关。
+- `runtime_context.json`：运行时能力上下文（当前固定为 `local_skill_tools_only`）。
 - `pipeline_steps.json`: 每个 pipeline step 的执行状态轨迹（success/failed/skipped）。
 - `run_summary.json`: 运行状态摘要。
 - `run_result.json`: 完整运行状态对象（含每个 step 的 `success/failed/skipped` 与 `failed_step`，以及已落盘产物清单）。

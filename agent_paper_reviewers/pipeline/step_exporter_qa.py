@@ -122,7 +122,7 @@ class ExporterAndQAGateStep(PipelineStep):
             "venue_recommendations.json": ctx.artifacts.get("venue_recommendations", {}),
             "venue_profile_used.json": ctx.artifacts["venue_profile"],
             "skill_flow_used.json": ctx.artifacts.get("skill_flow", {}),
-            "mcp_runtime.json": ctx.artifacts.get("mcp_runtime", {}),
+            "runtime_context.json": ctx.artifacts.get("runtime_context", {}),
             "feedback_template.json": feedback_template,
             "feedback_README.en.md": feedback_readme,
         }

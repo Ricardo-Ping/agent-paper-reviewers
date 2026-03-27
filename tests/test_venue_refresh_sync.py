@@ -4,10 +4,9 @@ from pathlib import Path
 
 import yaml
 
-from agent_paper_reviewers.providers.base import PolicyResolveResult
 from agent_paper_reviewers.models import RebuttalPolicy, VenueRuleSnapshot
 from agent_paper_reviewers.services.venue_loader import load_venue_snapshot
-from agent_paper_reviewers.services.venue_sync import refresh_venue_rules
+from agent_paper_reviewers.services.venue_sync import PolicyResolveResult, refresh_venue_rules
 
 
 def _write_snapshot(path: Path) -> None:
@@ -92,7 +91,7 @@ def test_refresh_venue_rules_writes_updated_snapshot(tmp_path: Path, monkeypatch
         )
 
     monkeypatch.setattr(
-        "agent_paper_reviewers.providers.http_provider.HttpMCPToolProvider.resolve_openreview_policy",
+        "agent_paper_reviewers.services.venue_sync.OpenReviewPolicyResolver.resolve_policy",
         fake_resolve,
     )
 

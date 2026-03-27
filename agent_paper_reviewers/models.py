@@ -21,11 +21,6 @@ class ExecutorBackend(str, Enum):
     LOCAL_VLLM = "local_vllm"
 
 
-class MCPBackend(str, Enum):
-    HTTP = "http"
-    DISABLED = "disabled"
-
-
 class ManuscriptStage(str, Enum):
     INITIAL_SUBMISSION = "initial_submission"
     REJECTED_AFTER_REVIEWS = "rejected_after_reviews"
@@ -52,7 +47,6 @@ class Constraints(BaseModel):
 class RunOptions(BaseModel):
     language_mode: LanguageMode = LanguageMode.EN
     executor_backend: ExecutorBackend = ExecutorBackend.CODEX
-    mcp_backend: MCPBackend = MCPBackend.HTTP
     always_export_pdf: bool = False
 
 

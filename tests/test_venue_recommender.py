@@ -75,7 +75,6 @@ def test_pipeline_exports_venue_recommendations(tmp_path: Path) -> None:
         "options": {
             "language_mode": "en",
             "executor_backend": "local_vllm",
-            "mcp_backend": "disabled",
             "always_export_pdf": False,
         },
     }

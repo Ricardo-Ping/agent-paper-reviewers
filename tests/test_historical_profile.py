@@ -86,7 +86,6 @@ def test_orchestrator_emits_historical_profile_artifact(tmp_path: Path, monkeypa
         "options": {
             "language_mode": "en",
             "executor_backend": "local_vllm",
-            "mcp_backend": "disabled",
             "always_export_pdf": False,
         },
     }

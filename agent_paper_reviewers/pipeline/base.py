@@ -7,17 +7,12 @@ from typing import TYPE_CHECKING, Any
 
 from ..models import ReviewRunInput, RunStatus
 
-if TYPE_CHECKING:
-    from ..providers.base import MCPToolProvider
-
-
 @dataclass
 class PipelineContext:
     run_id: str
     run_dir: Path
     input_data: ReviewRunInput
     repo_root: Path | None = None
-    mcp_tools: "MCPToolProvider | None" = None
     artifacts: dict[str, Any] = field(default_factory=dict)
     step_statuses: list[dict[str, Any]] = field(default_factory=list)
     qa_issues: list[str] = field(default_factory=list)

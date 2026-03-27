@@ -1,32 +1,34 @@
-﻿{
-  "paper": {
-    "format": "md",
-    "path": "sample_paper.md"
-  },
-  "venue": {
-    "name": "ICLR",
-    "year": 2026
-  },
-  "claims": [
-    "The proposed method improves average benchmark performance by 3.4 points.",
-    "The method is 22% faster than existing baselines."
-  ],
-  "review_context": {
-    "manuscript_stage": "initial_submission",
-    "reviewer_comments": [],
-    "note": ""
-  },
-  "constraints": {
-    "time_days": 7,
-    "gpu_budget_hours": 40,
-    "max_new_experiments": 4,
-    "cannot_run": ["large_human_eval"]
-  },
-  "options": {
-    "language_mode": "en_zh",
-    "executor_backend": "local_vllm",
-    "mcp_backend": "http",
-    "always_export_pdf": false
-  }
-}
+{
+    "paper":  {
+                  "format":  "md",
+                  "path":  "sample_paper.md"
+              },
+    "venue":  {
+                  "name":  "ICLR",
+                  "year":  2026
+              },
+    "claims":  [
+                   "The proposed method improves average benchmark performance by 3.4 points.",
+                   "The method is 22% faster than existing baselines."
+               ],
+    "review_context":  {
+                           "manuscript_stage":  "initial_submission",
+                           "reviewer_comments":  [
 
+                                                 ],
+                           "note":  ""
+                       },
+    "constraints":  {
+                        "time_days":  7,
+                        "gpu_budget_hours":  40,
+                        "max_new_experiments":  4,
+                        "cannot_run":  [
+                                           "large_human_eval"
+                                       ]
+                    },
+    "options":  {
+                    "language_mode":  "en_zh",
+                    "executor_backend":  "local_vllm",
+                    "always_export_pdf":  false
+                }
+}

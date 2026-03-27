@@ -53,7 +53,7 @@ Version: v1.0（与 `main` 当前实现对齐）
 1. Skill 流程层：`agent-paper-reviewers-skill/flow_config.yaml`。
 2. 编排层：`agent_paper_reviewers/orchestrator.py`。
 3. 执行器层：`ExecutorAdapter`（OpenClaw / OpenAI-compatible / Anthropic / local_vllm / deterministic fallback）。
-4. MCP 层：OpenReview 规则解析与动态补充（可禁用、可降级）。
+4. 规则层：本地 venue 规则快照（`data/venue_rules/*`）与未知会议 executor 自举补充。
 5. 产物层：统一输出 `MD + JSON + PDF(可选)`。
 
 ### 3.2 推荐运行模式（Agent 主导分析）
@@ -113,7 +113,6 @@ Version: v1.0（与 `main` 当前实现对齐）
   "options": {
     "language_mode": "en|en_zh",
     "executor_backend": "codex|agent_api|openai|anthropic|qwen|local_vllm",
-    "mcp_backend": "http|disabled",
     "always_export_pdf": false
   },
   "review_context": {
@@ -228,7 +227,7 @@ Version: v1.0（与 `main` 当前实现对齐）
 10. `venue_recommendations.json`
 11. `venue_profile_used.json`
 12. `skill_flow_used.json`
-13. `mcp_runtime.json`
+13. `runtime_context.json`
 14. `feedback_template.json`
 15. `pipeline_steps.json`
 16. `run_summary.json`
@@ -245,10 +244,11 @@ Version: v1.0（与 `main` 当前实现对齐）
 1. 外部模型不可用：回退 deterministic executor，流程不中断。
 2. `local_vllm` 502 或 API 不可达：记录 QA issue，回退规则逻辑。
 
-### 8.2 MCP/OpenReview 降级
+### 8.2 规则回退
 
-1. OpenReview token 缺失或网络失败：回退本地 venue 规则。
-2. 动态规则提取失败不应阻断主流程。
+1. 本地 venue 规则缺失：回退 `_fallback`。
+2. 未知会议：使用 executor 自举规则草案。
+3. 以上回退都不应阻断主流程。
 
 ### 8.3 引用图降级
 
