@@ -6,6 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import agent_paper_reviewers.cli as cli
+from agent_paper_reviewers.models import RunStatus, RunSummary
 
 
 def test_tool_venue_profile_json_output() -> None:
@@ -124,3 +125,101 @@ def test_tool_format_student_pack(tmp_path: Path) -> None:
         encoding="utf-8"
     )
 
+
+def test_review_pdf_command_generates_input_snapshot(tmp_path: Path, monkeypatch) -> None:
+    paper = tmp_path / "paper.pdf"
+    paper.write_bytes(b"%PDF-1.4\n%fake\n")
+
+    run_dir = tmp_path / "output" / "paper"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    def fake_run(self, review_input, output_root):  # noqa: ANN001
+        (run_dir / "rebuttal.en.md").write_text("# rebuttal", encoding="utf-8")
+        (run_dir / "decision_brief.en.json").write_text(
+            json.dumps({"decision": "Borderline", "decision_interpretation": "Needs fixes"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (run_dir / "artifacts").mkdir(parents=True, exist_ok=True)
+        (run_dir / "artifacts" / "risk_ranking.json").write_text(
+            json.dumps({"risks": []}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return RunSummary(
+            run_id="run-demo",
+            status=RunStatus.SUCCESS,
+            output_dir=str(run_dir),
+            qa_issues=[],
+            step_statuses=[],
+            produced_artifacts=[],
+            historical_profile={},
+        )
+
+    monkeypatch.setattr("agent_paper_reviewers.orchestrator.ReviewOrchestrator.run", fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        [
+            "review-pdf",
+            "--paper-path",
+            str(paper),
+            "--venue",
+            "ICLR",
+            "--year",
+            "2026",
+            "--executor-backend",
+            "local_vllm",
+            "--output-dir",
+            str(tmp_path / "output"),
+            "--ai-summary",
+        ],
+    )
+    assert result.exit_code == 0
+    generated = run_dir / "generated_input.json"
+    assert generated.exists()
+    payload = json.loads(generated.read_text(encoding="utf-8"))
+    assert payload["paper"]["format"] == "pdf"
+    assert payload["venue"]["name"] == "ICLR"
+    assert payload["options"]["executor_backend"] == "local_vllm"
+
+
+def test_review_pdf_strict_quality_returns_nonzero(tmp_path: Path, monkeypatch) -> None:
+    paper = tmp_path / "paper.pdf"
+    paper.write_bytes(b"%PDF-1.4\n%fake\n")
+
+    run_dir = tmp_path / "output" / "paper"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "RUN_GUIDE.en.md").write_text("# guide", encoding="utf-8")
+
+    def fake_run(self, review_input, output_root):  # noqa: ANN001
+        return RunSummary(
+            run_id="run-strict",
+            status=RunStatus.PARTIAL_FAILED,
+            output_dir=str(run_dir),
+            qa_issues=["risk_ranker_executor_warning:test_backend_error"],
+            step_statuses=[],
+            produced_artifacts=[],
+            historical_profile={},
+        )
+
+    monkeypatch.setattr("agent_paper_reviewers.orchestrator.ReviewOrchestrator.run", fake_run)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli.app,
+        [
+            "review-pdf",
+            "--paper-path",
+            str(paper),
+            "--venue",
+            "ICLR",
+            "--year",
+            "2026",
+            "--executor-backend",
+            "local_vllm",
+            "--output-dir",
+            str(tmp_path / "output"),
+            "--strict-quality",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "blocked due to" in result.stdout

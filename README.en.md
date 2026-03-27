@@ -54,6 +54,25 @@ Use this project as a toolkit layer, and let your preferred agent handle semanti
 2. Let the agent read/analyze the paper (claims, gaps, risk ranking, rebuttal drafting).
 3. Use toolkit formatter commands to output standardized student-facing files.
 
+### Dual-persona strategy (deeper mode)
+**Persona A: Agent orchestrator (automation-first)**
+- Use `review-pdf --ai-summary --strict-quality` as the default entry.
+- Read `AGENT_HANDOFF.json` and `ai_summary.json` first to decide routing.
+- If strict-quality exits non-zero, fix backend/parse blockers before another analysis round.
+- Then read `PERSONA_PLAYBOOK.en.md` and execute the Agent Operator checklist.
+
+**Persona B: Graduate student author (revision-first)**
+- Start from `STUDENT_BRIEF.*.md` to get top blockers and first-day actions.
+- Read `PERSONA_PLAYBOOK.zh.md` (or `.en.md`) for risk-to-action mapping before editing.
+- Then execute `student_pack/*` in 001 -> 002 -> 003 order.
+- Use `full_review` and `diagnosis_report` only for deeper fixes.
+
+### Dual-persona collaboration loop (recommended)
+1. Agent runs `review-pdf --ai-summary --strict-quality`.
+2. Agent hands only 3 entry points to student: `STUDENT_BRIEF`, `PERSONA_PLAYBOOK`, `student_pack/002-action-items`.
+3. Student revises and submits `feedback_template.json` via `submit-feedback`.
+4. Agent reruns and checks `run_result.json` + `pipeline_steps.json` for blocker-free status.
+
 ### Tool-only CLI commands
 ```bash
 # 1) Resolve venue policy profile
@@ -82,10 +101,16 @@ You can tell your Agent directly:
 Please set up and initialize agent-paper-reviewers in this repo: create and activate conda env agent-paper-reviewers-gpu, run pip install -e ., run python -m agent_paper_reviewers.cli doctor, and execute one validation run with examples/sample_input.json.
 ```
 
+If you want the Agent to run your PDF directly:
+
+```text
+Please run review-pdf directly (no manual input.json): python -m agent_paper_reviewers.cli review-pdf --paper-path <absolute_pdf_path> --venue ICLR --year 2026 --output-dir output --ai-summary --strict-quality, then summarize key blockers and action items.
+```
+
 If the PDF is only uploaded in chat and not saved yet:
 
 ```text
-Please save the PDF I uploaded to input_files/paper.pdf in this repo first, then create input.json using that path and run the full review flow.
+Please save the PDF I uploaded to input_files/paper.pdf in this repo first, then run the review-pdf command using that saved path.
 ```
 
 ## Requirements
@@ -141,6 +166,20 @@ python -m agent_paper_reviewers.cli run --input examples/sample_input.json --out
 # Add machine-friendly concise summary for agent consumption:
 python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output --ai-summary
 ```
+
+Or run directly from a PDF (no manual `input.json` needed):
+```bash
+python -m agent_paper_reviewers.cli review-pdf \
+  --paper-path /abs/path/paper.pdf \
+  --venue ICLR \
+  --year 2026 \
+  --executor-backend codex \
+  --language-mode en_zh \
+  --output-dir output \
+  --ai-summary \
+  --strict-quality
+```
+This command writes `generated_input.json` into the run directory for reproducibility.
 
 Note:
 - This command reads `examples/sample_input.json`.
@@ -221,12 +260,29 @@ Common environment variables:
 ## Output artifacts
 ### Student-first entry (recommended)
 - `START_HERE.md`: quick entry that tells you which 3 files to read first.
+- `RUN_GUIDE.md`: run health + next actions (includes unblock guidance when needed).
+- `STUDENT_BRIEF.md`: compact execution brief (top blockers + first 24-hour actions).
+- `PERSONA_PLAYBOOK.md`: dual-persona runbook (agent orchestration path + student revision path).
 - `student_pack/en/001-submission-decision.md`: one-page submit/hold decision with top blockers.
 - `student_pack/en/002-action-items.md`: executable action list with anchors and effort hints.
 - `student_pack/en/003-rebuttal-draft.md`: risk-mapped rebuttal draft by reviewer concern.
 - In bilingual mode, matching `student_pack/zh/*` and `START_HERE.zh.md` are also generated.
 
 This `student_pack` is the human-readable default workflow. The other JSON/intermediate files are mainly for debugging, traceability, and feedback loops.
+
+Key fields in `ai_summary.json` (for agent automation):
+- `degraded` / `degraded_reasons`: whether this run is degraded and why
+- `student_pack_ready`: whether the 3 student-pack files are ready to use
+- `recommended_next_action`: best immediate next move
+- `step_overview`: per-step success/failed/skipped counters
+- `key_files`: indexed key deliverables (paths are relative to `run_dir` for cross-platform stability)
+- `persona_routes`: suggested read paths for agent-first vs student-first usage
+- `minimal_checks`: minimum file checklist for automation gating
+
+`AGENT_HANDOFF.json` (machine handoff contract) includes:
+- quality state (executor warnings, strict-quality readiness)
+- top risks and top actions
+- recommended rerun command (`rerun_strict`)
 
 ### Core reports
 - `decision_brief.en.md/json`: short decision report (with per-axis score rationale).

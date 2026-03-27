@@ -55,6 +55,25 @@
 
 这样做的好处是：分析能力由你选择的 Agent 决定（Codex/OpenClaw/其他），而格式与流程资产保持稳定复用。
 
+### 双人设使用策略（深度版）
+**人设 A：Agent 编排者（自动化优先）**
+- 用 `review-pdf --ai-summary --strict-quality` 作为标准入口。
+- 首先读取 `AGENT_HANDOFF.json` 与 `ai_summary.json` 判断是否可继续。
+- 若 `strict-quality` 非零退出，先处理模型后端/解析质量阻断，再做下一轮分析。
+- 再读取 `PERSONA_PLAYBOOK.en.md`，按 “Agent Operator” 小节执行重跑命令与质量门禁。
+
+**人设 B：研究生作者（改稿优先）**
+- 先读 `STUDENT_BRIEF.*.md`，确认“今天先改哪 3 件事”。
+- 再读 `PERSONA_PLAYBOOK.zh.md`（或 `.en.md`）确认“风险 -> 动作”的映射关系。
+- 再按 `student_pack/*` 的 001 -> 002 -> 003 顺序推进。
+- 最后参考 `full_review` 与 `diagnosis_report` 做细化补洞。
+
+### 双人设协作闭环（建议固定）
+1. Agent 先跑：`review-pdf --ai-summary --strict-quality`。
+2. Agent 只交付 3 个入口给研究生：`STUDENT_BRIEF`、`PERSONA_PLAYBOOK`、`student_pack/002-action-items`。
+3. 研究生改完后回填 `feedback_template.json` 并执行 `submit-feedback`。
+4. Agent 基于反馈再跑一轮，检查 `run_result.json` 与 `pipeline_steps.json` 是否无阻断。
+
 ### Tool-Only 命令（给 Agent 调用）
 ```bash
 # 1) 取会议规则（JSON）
@@ -86,13 +105,13 @@ python -m agent_paper_reviewers.cli tool-format-student-pack --analysis-json age
 如果你要让 Agent 直接跑你的 PDF，可以说：
 
 ```text
-请帮我基于这篇 PDF 创建 input.json（paper.format=pdf，paper.path=绝对路径），然后运行 python -m agent_paper_reviewers.cli run --input <input.json> --output-dir output，并汇总输出目录中的关键结论。
+请直接用 review-pdf 命令跑这篇论文（不用手写 input.json）：python -m agent_paper_reviewers.cli review-pdf --paper-path <绝对路径> --venue ICLR --year 2026 --output-dir output --ai-summary --strict-quality，并汇总输出目录中的关键结论。
 ```
 
 如果 PDF 是你直接发在 Agent 对话窗口、但还没保存到本地，可以说：
 
 ```text
-请先把我刚上传的 PDF 保存到当前仓库 input_files/paper.pdf，然后基于这个路径生成 input.json 并运行评审流程。
+请先把我刚上传的 PDF 保存到当前仓库 input_files/paper.pdf，然后用 review-pdf 命令直接运行评审流程。
 ```
 
 ## 环境要求
@@ -148,6 +167,20 @@ python -m agent_paper_reviewers.cli run --input examples/sample_input.json --out
 # 如果你希望给 Agent 一个简洁机器摘要：
 python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output --ai-summary
 ```
+
+也可以直接跑 PDF（无需手写 `input.json`）：
+```bash
+python -m agent_paper_reviewers.cli review-pdf \
+  --paper-path /abs/path/paper.pdf \
+  --venue ICLR \
+  --year 2026 \
+  --executor-backend codex \
+  --language-mode en_zh \
+  --output-dir output \
+  --ai-summary \
+  --strict-quality
+```
+该命令会自动写入 `generated_input.json` 到本次输出目录，便于复现和二次编辑。
 
 说明：
 - 这条命令会读取 `examples/sample_input.json`。
@@ -228,12 +261,29 @@ output/<paper_title>/
 ## 输出文件说明
 ### 研究生优先入口（推荐先看）
 - `START_HERE.md`：总入口，告诉你先看哪 3 个文件。
+- `RUN_GUIDE.md`：运行状态 + 下一步建议（有阻断会直接给出解除方法）。
+- `STUDENT_BRIEF.md`：研究生极简执行摘要（Top 阻断 + 前 24 小时动作）。
+- `PERSONA_PLAYBOOK.md`：双人设执行手册（Agent 编排流 + 研究生改稿流）。
 - `student_pack/en/001-submission-decision.md`：一页决策（是否建议投稿 + Top 阻断问题）。
 - `student_pack/en/002-action-items.md`：可执行行动清单（按优先级、带证据锚点与实验工作量）。
 - `student_pack/en/003-rebuttal-draft.md`：与风险映射的 rebuttal 草稿（逐 reviewer）。
 - 双语模式下会同步生成 `student_pack/zh/*` 与 `START_HERE.zh.md`。
 
 这套 `student_pack` 是给研究生“拿来就改”的人类可读入口；其余 JSON/中间文件主要用于调试、追溯和反馈闭环。
+
+`ai_summary.json`（给 Agent 自动化）的关键字段：
+- `degraded` / `degraded_reasons`：本次运行是否降级及原因
+- `student_pack_ready`：三份 student pack 是否可直接使用
+- `recommended_next_action`：推荐下一步动作
+- `step_overview`：各 step 成功/失败/跳过计数
+- `key_files`：关键文件路径索引（相对 `run_dir`，避免跨平台乱码）
+- `persona_routes`：Agent-first 与 Student-first 建议读取路径
+- 新增 `minimal_checks`：最小质量核查文件列表（自动化可直接据此做 gating）
+
+`AGENT_HANDOFF.json`（给 Agent 的机器交接包）包含：
+- 运行质量状态（是否有 executor warning / 是否会触发 strict 失败）
+- Top 风险与 Top 动作清单
+- 下一轮建议命令（含 `rerun_strict`）
 
 ### 核心报告
 - `decision_brief.en.md/json`: 短版决策报告（投稿建议 + Top 风险 + 必补实验 + 各评分解释）。

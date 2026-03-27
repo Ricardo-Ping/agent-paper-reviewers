@@ -1,6 +1,6 @@
 {
   "name": "agent-paper-reviewers",
-  "version": "1.1.0",
+  "version": "1.4.0",
   "mode": "skill-toolkit-agent-analysis",
   "notes": [
     "Main pipeline runs in pure skill mode.",
@@ -61,13 +61,49 @@
       "args": {
         "input": "path",
         "output_dir": "path",
-        "ai_summary": "boolean"
+        "ai_summary": "boolean",
+        "strict_quality": "boolean"
       },
-      "output": "full report artifacts + ai_summary.json",
+      "output": "full report artifacts + ai_summary.json + AGENT_HANDOFF.json + PERSONA_PLAYBOOK.*.md + STUDENT_BRIEF.*.md",
+      "internal_llm": true
+    },
+    {
+      "name": "review-pdf",
+      "description": "One-command PDF review without manually writing input.json.",
+      "command": "python -m agent_paper_reviewers.cli review-pdf --paper-path <paper.pdf> --venue <venue> --year <year> --output-dir <dir> --ai-summary",
+      "args": {
+        "paper_path": "path(.pdf)",
+        "venue": "string",
+        "year": "number",
+        "language_mode": "en|en_zh",
+        "executor_backend": "codex|agent_api|openai|anthropic|qwen|local_vllm",
+        "claim": "repeatable string",
+        "reviewer_comment": "repeatable string (R1::concern or plain text)",
+        "strict_quality": "boolean"
+      },
+      "output": "full report artifacts + ai_summary.json + generated_input.json + AGENT_HANDOFF.json + PERSONA_PLAYBOOK.*.md + STUDENT_BRIEF.*.md",
       "internal_llm": true
     }
   ],
   "high_level_commands": {
+    "agent-ops-loop": {
+      "description": "Automation-first loop for AI agents with strict quality gate.",
+      "steps": [
+        "review-pdf --strict-quality --ai-summary",
+        "read AGENT_HANDOFF.json",
+        "fix blockers",
+        "rerun strict"
+      ]
+    },
+    "student-revision-loop": {
+      "description": "Revision-first loop for graduate students.",
+      "steps": [
+        "read STUDENT_BRIEF.*.md",
+        "read PERSONA_PLAYBOOK.*.md",
+        "execute student_pack/*/001 -> 002 -> 003",
+        "submit-feedback"
+      ]
+    },
     "agent-first-review": {
       "description": "Agent handles semantic analysis, skill handles extraction and formatting.",
       "steps": [
@@ -82,6 +118,12 @@
       "description": "Use built-in pipeline for one-shot execution.",
       "steps": [
         "run"
+      ]
+    },
+    "quick-pdf-review": {
+      "description": "Fastest path for agents/students with only a PDF path.",
+      "steps": [
+        "review-pdf"
       ]
     }
   },

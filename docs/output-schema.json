@@ -21,6 +21,9 @@
       "root_dir_pattern": "output/<paper_title>/",
       "student_first_pack": [
         "START_HERE.{md|en.md|zh.md}",
+        "RUN_GUIDE.{md|en.md|zh.md}",
+        "STUDENT_BRIEF.{md|en.md|zh.md}",
+        "PERSONA_PLAYBOOK.{md|en.md|zh.md}",
         "student_pack/{en|zh}/001-submission-decision.md",
         "student_pack/{en|zh}/002-action-items.md",
         "student_pack/{en|zh}/003-rebuttal-draft.md"
@@ -43,6 +46,9 @@
         "venue_profile_used.json",
         "skill_flow_used.json",
         "runtime_context.json",
+        "generated_input.json",
+        "ai_summary.json",
+        "AGENT_HANDOFF.json",
         "feedback_template.json",
         "run_summary.json",
         "run_result.json",
@@ -58,7 +64,8 @@
     "integration_advice": [
       "Always parse run_result.status first; then branch into success/partial_failed handling.",
       "Treat qa_issues as warnings unless status=failed and failed_step is not null.",
-      "Use passage_id + section + locator from EvidenceRef as the canonical evidence anchor."
+      "Use passage_id + section + locator from EvidenceRef as the canonical evidence anchor.",
+      "For dual-persona workflows, read PERSONA_PLAYBOOK first, then branch to AGENT_HANDOFF or STUDENT_BRIEF routes."
     ]
   },
   "$defs": {

@@ -70,8 +70,14 @@ Version: v1.0（与 `main` 当前实现对齐）
 2. `tool-parse-paper`
 3. `tool-format-template`
 4. `tool-format-student-pack`
+5. `review-pdf`（一键 PDF 跑通，不必手写 input.json）
 
 说明：完整 pipeline（`run --input ...`）仍保留，适合一键执行与回归测试。
+质量闸说明：`run` 与 `review-pdf` 支持 `--strict-quality`，用于 Agent 自动化时“有阻断即非零退出”。
+
+双人设交付说明：
+1. Agent 路径：优先读 `AGENT_HANDOFF.json`、`ai_summary.json`、`PERSONA_PLAYBOOK.en.md`。
+2. 研究生路径：优先读 `STUDENT_BRIEF.*.md`、`PERSONA_PLAYBOOK.*.md`、`student_pack/*`。
 
 ### 3.3 固定流水线步骤（17 步）
 
@@ -201,10 +207,13 @@ Version: v1.0（与 `main` 当前实现对齐）
 ### 7.1 研究生优先入口（推荐默认阅读顺序）
 
 1. `START_HERE.{md|en.md|zh.md}`：总入口，告诉用户先看哪 3 个文件。
-2. `student_pack/en/001-submission-decision.md`：一页决策（是否投稿 + Top 阻断问题）。
-3. `student_pack/en/002-action-items.md`：可执行动作清单（优先级、证据锚点、工作量）。
-4. `student_pack/en/003-rebuttal-draft.md`：与风险映射的 rebuttal 草稿。
-5. 双语模式下同步生成 `student_pack/zh/*`。
+2. `RUN_GUIDE.{md|en.md|zh.md}`：运行状态、阻断项、下一步动作。
+3. `STUDENT_BRIEF.{md|en.md|zh.md}`：研究生极简执行摘要（Top 阻断 + 前 24 小时动作）。
+4. `PERSONA_PLAYBOOK.{md|en.md|zh.md}`：双人设执行手册（Agent 编排流 + 研究生改稿流）。
+5. `student_pack/en/001-submission-decision.md`：一页决策（是否投稿 + Top 阻断问题）。
+6. `student_pack/en/002-action-items.md`：可执行动作清单（优先级、证据锚点、工作量）。
+7. `student_pack/en/003-rebuttal-draft.md`：与风险映射的 rebuttal 草稿。
+8. 双语模式下同步生成 `student_pack/zh/*`。
 
 ### 7.2 主报告（完整视图）
 
@@ -228,10 +237,22 @@ Version: v1.0（与 `main` 当前实现对齐）
 11. `venue_profile_used.json`
 12. `skill_flow_used.json`
 13. `runtime_context.json`
-14. `feedback_template.json`
-15. `pipeline_steps.json`
-16. `run_summary.json`
-17. `run_result.json`
+14. `generated_input.json`（`review-pdf` 模式自动生成）
+15. `ai_summary.json`（Agent 可读摘要）
+16. `AGENT_HANDOFF.json`（Agent 下一轮可直接接手的机器交接包）
+17. `feedback_template.json`
+18. `pipeline_steps.json`
+19. `run_summary.json`
+20. `run_result.json`
+
+`ai_summary.json` 关键字段：
+- `degraded` / `degraded_reasons`
+- `student_pack_ready`
+- `recommended_next_action`
+- `step_overview`
+- `key_files`（相对 `run_dir`）
+- `persona_routes`
+- `minimal_checks`
 
 机器可校验结构请以 `docs/output-schema.json` 为准。
 

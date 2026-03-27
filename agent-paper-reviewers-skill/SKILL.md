@@ -50,13 +50,13 @@ Skill 同级提供 `manifest.json`，用于告诉 Agent：
 跑自定义 PDF 时可以说：
 
 ```text
-请帮我基于这篇 PDF 创建 input.json（paper.format=pdf，paper.path=绝对路径），然后运行 python -m agent_paper_reviewers.cli run --input <input.json> --output-dir output，并汇总拒稿风险、必补实验和 rebuttal 草稿。
+请直接用 review-pdf 命令跑这篇论文（不手写 input.json）：python -m agent_paper_reviewers.cli review-pdf --paper-path <绝对路径> --venue ICLR --year 2026 --output-dir output --ai-summary --strict-quality，并汇总拒稿风险、必补实验和 rebuttal 草稿。
 ```
 
 如果 PDF 来自对话窗口附件且尚未落盘，可以说：
 
 ```text
-请先把我上传的 PDF 保存到当前仓库 input_files/paper.pdf，再基于该路径生成 input.json 并执行完整流程。
+请先把我上传的 PDF 保存到当前仓库 input_files/paper.pdf，再用 review-pdf 命令直接执行完整流程。
 ```
 
 如果你不确定投哪个会议，可以说：
@@ -163,7 +163,21 @@ python -m agent_paper_reviewers.cli run --input examples/sample_input.json --out
 ```bash
 python -m agent_paper_reviewers.cli run --input examples/sample_input.json --output-dir output --ai-summary
 ```
-会在 `output/<paper_name>/ai_summary.json` 生成简洁摘要（verdict/top_risks/must_fix/confidence）。
+会在 `output/<paper_name>/ai_summary.json` 生成机器可读摘要（包含 verdict/top_risks/must_fix/confidence/degraded/next_action）。
+
+- 直接跑 PDF（无需手写 input.json，推荐）：
+```bash
+python -m agent_paper_reviewers.cli review-pdf \
+  --paper-path /abs/path/paper.pdf \
+  --venue ICLR \
+  --year 2026 \
+  --executor-backend codex \
+  --language-mode en_zh \
+  --output-dir output \
+  --ai-summary \
+  --strict-quality
+```
+该命令会在输出目录额外写入 `generated_input.json`，便于复现和二次编辑。
 
 - 跑 PDF 示例：
 ```bash
@@ -210,11 +224,27 @@ python -m agent_paper_reviewers.cli tool-format-template --template student_pack
 python -m agent_paper_reviewers.cli tool-format-student-pack --analysis-json agent_analysis.json --output-dir output/student_pack/en --language en
 ```
 
-## 推荐两种 Pipeline 用法
+## 推荐 Pipeline 用法
 1. Agent-First（推荐）：
    - `tool-parse-paper` -> `tool-venue-profile` -> Agent 分析 -> `tool-format-student-pack`
 2. Full-Run（一键）：
    - `run --input ... --output-dir ... --ai-summary`
+3. Quick PDF（一键）：
+   - `review-pdf --paper-path ... --venue ... --year ... --ai-summary`
+4. Agent 严格模式（自动化推荐）：
+   - `review-pdf ... --ai-summary --strict-quality`
+
+## 双人设执行闭环（建议固定）
+1. Agent 编排者：
+   - 跑 `review-pdf --ai-summary --strict-quality`。
+   - 先读 `AGENT_HANDOFF.json` + `ai_summary.json` + `PERSONA_PLAYBOOK.en.md`。
+   - 若 strict-quality 阻断，先修复后端/解析质量，再重跑。
+2. 研究生作者：
+   - 先读 `STUDENT_BRIEF.*.md` + `PERSONA_PLAYBOOK.*.md`。
+   - 再按 `student_pack/*/001 -> 002 -> 003` 顺序执行。
+3. 反馈闭环：
+   - 改完后填 `feedback_template.json`，执行 `submit-feedback`。
+   - Agent 再跑一轮，检查 `run_result.json` 与 `pipeline_steps.json` 是否无阻断。
 
 ## 重要说明（避免误解）
 - `examples/sample_input.json` 默认指向 `examples/sample_paper.md`，不是用户自己的 PDF。
@@ -230,6 +260,9 @@ python -m agent_paper_reviewers.cli tool-format-student-pack --analysis-json age
 ## 输出文件与作用
 研究生优先入口（建议先看）：
 - `START_HERE.md`：总入口，告诉用户先看哪 3 个文件。
+- `RUN_GUIDE.md`：运行状态与下一步建议（阻断时会给出解除方法）。
+- `STUDENT_BRIEF.md`：研究生极简摘要（Top 阻断 + 前 24 小时动作）。
+- `PERSONA_PLAYBOOK.md`：双人设执行手册（Agent 编排流 + 研究生改稿流）。
 - `student_pack/en/001-submission-decision.md`：一页决策（是否建议投稿 + Top 阻断问题）。
 - `student_pack/en/002-action-items.md`：按优先级执行的行动清单（证据锚点 + 工作量）。
 - `student_pack/en/003-rebuttal-draft.md`：与风险映射的 rebuttal 草稿。
@@ -264,6 +297,20 @@ python -m agent_paper_reviewers.cli tool-format-student-pack --analysis-json age
 - `remediation_plan.json`：补救任务清单。
 - `venue_recommendations.json`：会议推荐列表（匹配分、理由、通过/未通过检查项）。
 - `feedback_template.json`：风险反馈模板（每条风险可标记 `correct|incorrect|pending`）。
+
+`ai_summary.json` 关键字段（给 Agent 用）：
+- `degraded` / `degraded_reasons`：是否降级以及原因
+- `student_pack_ready`：三份 student pack 是否可直接使用
+- `recommended_next_action`：下一步建议
+- `step_overview`：pipeline step 成功/失败/跳过计数
+- `key_files`：关键文件路径索引（相对 `run_dir`，跨平台更稳定）
+- `persona_routes`：Agent-first / Student-first 推荐读取路径
+- `minimal_checks`：自动化 gating 最小核查文件列表
+
+`AGENT_HANDOFF.json`（给 Agent 的机器交接包）：
+- 当前运行质量状态（含 strict-quality 是否会失败）
+- Top 风险 + Top 行动清单
+- 建议下一轮命令（`rerun_strict`）
 - `feedback_README.en.md` / `feedback_README.zh.md`：反馈模板填写与提交说明。
 - `venue_profile_used.json`：会议规则快照。
   - 含 `required_check_specs`（阈值规则）和 `source/source_notes`（规则来源）。

@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .executors.factory import validate_executor_readiness
-from .models import ExecutorBackend, ReviewRunInput
+from .models import ExecutorBackend, ManuscriptStage, ReviewRunInput, RunStatus
 from .services.feedback_store import submit_feedback
 from .services.paper_parser import parse_markdown, parse_pdf
 from .services.pdf_export import detect_pdf_export_capability
@@ -145,9 +145,23 @@ def _safe_read_json(path: Path) -> dict:
 
 
 def _build_ai_summary_payload(summary, run_dir: Path) -> dict:
+    run_dir = run_dir.resolve()
     decision = _safe_read_json(run_dir / "decision_brief.en.json")
     risk = _safe_read_json(run_dir / "artifacts" / "risk_ranking.json")
     rebuttal_path = run_dir / "rebuttal.en.md"
+    student_pack_decision = run_dir / "student_pack" / "en" / "001-submission-decision.md"
+    run_guide_path = run_dir / "RUN_GUIDE.en.md"
+    student_brief_path = run_dir / "STUDENT_BRIEF.en.md"
+    persona_playbook_path = run_dir / "PERSONA_PLAYBOOK.en.md"
+    agent_handoff_path = run_dir / "AGENT_HANDOFF.json"
+
+    def _rel(path: Path | None) -> str | None:
+        if path is None or not path.exists():
+            return None
+        try:
+            return str(path.resolve().relative_to(run_dir)).replace("\\", "/")
+        except Exception:  # noqa: BLE001
+            return str(path.resolve())
 
     top_risks: list[dict] = []
     must_fix: list[str] = []
@@ -197,16 +211,145 @@ def _build_ai_summary_payload(summary, run_dir: Path) -> dict:
     confidence = 0.92 - (0.06 * fallback_count) - qa_penalty
     confidence = max(0.2, min(0.95, round(confidence, 3)))
 
+    step_statuses = summary.step_statuses if isinstance(summary.step_statuses, list) else []
+    step_overview = {
+        "success": 0,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+        "running": 0,
+    }
+    for row in step_statuses:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("status", "")).strip().lower()
+        if status in step_overview:
+            step_overview[status] += 1
+
+    qa_strings = [str(x) for x in summary.qa_issues]
+    student_pack_blocked = any("student_pack_generation_failed" in x for x in qa_strings)
+    student_pack_ready = student_pack_decision.exists() and not student_pack_blocked
+    degraded_reasons: list[str] = []
+    if summary.status != RunStatus.SUCCESS:
+        degraded_reasons.append(f"run_status={summary.status.value}")
+    if fallback_count > 0:
+        degraded_reasons.append(f"executor_fallback_count={fallback_count}")
+    degraded_reasons.extend(qa_strings[:6])
+    degraded = bool(degraded_reasons)
+
+    if student_pack_blocked:
+        recommended_next_action = (
+            "Student pack is blocked. Configure a live executor backend and rerun "
+            "(OpenAI/Anthropic/OpenClaw/local vLLM endpoint)."
+        )
+    elif must_fix:
+        recommended_next_action = (
+            "Open student_pack/en/002-action-items.md and complete all P0/P1 tasks before submission."
+        )
+    elif summary.status == RunStatus.FAILED:
+        recommended_next_action = "Open pipeline_exception.log and fix the failed pipeline step first."
+    else:
+        recommended_next_action = (
+            "Start from START_HERE.en.md and verify rebuttal anchors in student_pack/en/003-rebuttal-draft.md."
+        )
+
     return {
         "run_id": summary.run_id,
+        "run_dir": str(run_dir),
         "status": summary.status.value,
         "verdict": verdict,
         "top_risks": top_risks,
         "must_fix_before_submit": must_fix,
-        "rebuttal_ready": str(rebuttal_path) if rebuttal_path.exists() else None,
+        "rebuttal_ready": _rel(rebuttal_path),
         "confidence": confidence,
         "qa_issue_count": len(summary.qa_issues),
+        "degraded": degraded,
+        "degraded_reasons": degraded_reasons,
+        "student_pack_ready": student_pack_ready,
+        "recommended_next_action": recommended_next_action,
+        "step_overview": step_overview,
+        "key_files": {
+            "start_here": "START_HERE.en.md",
+            "run_guide": _rel(run_guide_path),
+            "student_brief": _rel(student_brief_path),
+            "persona_playbook": _rel(persona_playbook_path),
+            "student_pack_decision": _rel(student_pack_decision),
+            "student_pack_actions": (
+                _rel(run_dir / "student_pack" / "en" / "002-action-items.md")
+            ),
+            "student_pack_rebuttal": (
+                _rel(run_dir / "student_pack" / "en" / "003-rebuttal-draft.md")
+            ),
+            "full_review": _rel(run_dir / "full_review.en.md"),
+            "agent_handoff": _rel(agent_handoff_path),
+        },
+        "persona_routes": {
+            "agent_first": [
+                "AGENT_HANDOFF.json",
+                "ai_summary.json",
+                "RUN_GUIDE.en.md",
+                "PERSONA_PLAYBOOK.en.md",
+            ],
+            "student_first": [
+                "STUDENT_BRIEF.en.md",
+                "PERSONA_PLAYBOOK.en.md",
+                "student_pack/en/001-submission-decision.md",
+                "student_pack/en/002-action-items.md",
+                "student_pack/en/003-rebuttal-draft.md",
+            ],
+            "minimal_checks": [
+                "run_result.json",
+                "pipeline_steps.json",
+                "AGENT_HANDOFF.json",
+            ],
+        },
     }
+
+
+def _parse_reviewer_comment_flags(items: list[str]) -> list[dict]:
+    parsed: list[dict] = []
+    for idx, raw in enumerate(items, start=1):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        if "::" in text:
+            review_id, concern = text.split("::", 1)
+            rid = review_id.strip() or f"R{idx}"
+            concern_text = concern.strip()
+        else:
+            rid = f"R{idx}"
+            concern_text = text
+        if not concern_text:
+            continue
+        parsed.append({"review_id": rid, "concern": concern_text})
+    return parsed
+
+
+def _strict_quality_fail_reasons(summary) -> list[str]:
+    reasons: list[str] = []
+    qa_issues = [str(x) for x in summary.qa_issues]
+    if summary.status == RunStatus.FAILED:
+        reasons.append("run_status=failed")
+    if any("student_pack_generation_failed" in x for x in qa_issues):
+        reasons.append("student_pack_not_ready")
+    if any("executor_warning" in x for x in qa_issues):
+        reasons.append("executor_warning_detected")
+    if any("fallback" in x.lower() for x in qa_issues):
+        reasons.append("fallback_detected")
+    if any("pdf_parse_quality" in x for x in qa_issues):
+        reasons.append("pdf_parse_quality_warning")
+    return reasons
+
+
+def _apply_strict_quality_gate(summary, run_dir: Path) -> None:
+    reasons = _strict_quality_fail_reasons(summary)
+    if not reasons:
+        return
+    console.print("[strict-quality] blocked due to:")
+    for item in reasons:
+        console.print(f"- {item}")
+    console.print(f"see: {run_dir / 'RUN_GUIDE.en.md'}")
+    raise typer.Exit(code=2)
 
 
 @app.command("doctor")
@@ -320,6 +463,11 @@ def run_pipeline(
         "--ai-summary",
         help="Write ai_summary.json (machine-readable concise verdict) into run output dir.",
     ),
+    strict_quality: bool = typer.Option(
+        False,
+        "--strict-quality",
+        help="Fail with non-zero code when quality blockers are detected.",
+    ),
 ) -> None:
     from .orchestrator import ReviewOrchestrator
 
@@ -348,6 +496,134 @@ def run_pipeline(
         summary_path = run_dir / "ai_summary.json"
         summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         console.print(f"ai_summary: {summary_path}")
+    if strict_quality:
+        _apply_strict_quality_gate(summary, Path(summary.output_dir))
+
+
+@app.command("review-pdf")
+def review_pdf(
+    paper_path: Path = typer.Option(..., "--paper-path", help="Path to paper PDF."),
+    output_dir: Path = typer.Option(Path("output"), "--output-dir", help="Output root directory"),
+    venue: str = typer.Option(
+        "unknownconf",
+        "--venue",
+        help="Target venue name. Use unknownconf to trigger recommendation-first behavior.",
+    ),
+    year: int = typer.Option(2026, "--year", help="Target venue year."),
+    language_mode: str = typer.Option("en", "--language-mode", help="en|en_zh"),
+    executor_backend: ExecutorBackend = typer.Option(
+        ExecutorBackend.CODEX,
+        "--executor-backend",
+        help="codex|agent_api|openai|anthropic|qwen|local_vllm",
+    ),
+    always_export_pdf: bool = typer.Option(
+        False,
+        "--always-export-pdf/--no-always-export-pdf",
+        help="Whether to export markdown reports to PDF.",
+    ),
+    claim: list[str] | None = typer.Option(
+        None,
+        "--claim",
+        help="Optional repeatable core claims. If omitted, ClaimDiscoverer auto-discovers from paper.",
+    ),
+    manuscript_stage: ManuscriptStage = typer.Option(
+        ManuscriptStage.INITIAL_SUBMISSION,
+        "--manuscript-stage",
+        help="initial_submission|rejected_after_reviews|meta_review_discussion",
+    ),
+    reviewer_comment: list[str] | None = typer.Option(
+        None,
+        "--reviewer-comment",
+        help="Optional repeatable reviewer concern. Format: R1::text or plain text.",
+    ),
+    time_days: int = typer.Option(10, "--time-days", help="Resource constraint: available days."),
+    gpu_budget_hours: int = typer.Option(
+        200,
+        "--gpu-budget-hours",
+        help="Resource constraint: total GPU hours.",
+    ),
+    max_new_experiments: int = typer.Option(
+        6,
+        "--max-new-experiments",
+        help="Resource constraint: max number of new experiments.",
+    ),
+    author_hash: str = typer.Option("", "--author-hash", help="Optional profile author hash."),
+    ai_summary: bool = typer.Option(
+        True,
+        "--ai-summary/--no-ai-summary",
+        help="Write ai_summary.json into run output dir.",
+    ),
+    save_generated_input: bool = typer.Option(
+        True,
+        "--save-generated-input/--no-save-generated-input",
+        help="Save generated input payload to generated_input.json in run dir.",
+    ),
+    strict_quality: bool = typer.Option(
+        False,
+        "--strict-quality",
+        help="Fail with non-zero code when quality blockers are detected.",
+    ),
+) -> None:
+    """One-command PDF review for agent + graduate-student workflows."""
+    from .orchestrator import ReviewOrchestrator
+
+    if not paper_path.exists():
+        raise typer.BadParameter(f"Paper file not found: {paper_path}")
+    if paper_path.suffix.lower().strip() != ".pdf":
+        raise typer.BadParameter("review-pdf currently expects a .pdf file.")
+    lang_mode = language_mode.strip().lower()
+    if lang_mode not in {"en", "en_zh"}:
+        raise typer.BadParameter("language-mode must be en or en_zh.")
+
+    reviewer_comment = reviewer_comment or []
+    claim = claim or []
+    generated_input = {
+        "paper": {"format": "pdf", "path": str(paper_path.resolve())},
+        "venue": {"name": venue, "year": year},
+        "claims": [x for x in claim if str(x).strip()],
+        "constraints": {
+            "time_days": int(time_days),
+            "gpu_budget_hours": int(gpu_budget_hours),
+            "max_new_experiments": int(max_new_experiments),
+        },
+        "options": {
+            "language_mode": lang_mode,
+            "executor_backend": executor_backend.value,
+            "always_export_pdf": bool(always_export_pdf),
+        },
+        "profile": {"author_hash": author_hash.strip()},
+        "review_context": {
+            "manuscript_stage": manuscript_stage.value,
+            "reviewer_comments": _parse_reviewer_comment_flags(reviewer_comment),
+        },
+    }
+    review_input = ReviewRunInput.model_validate(generated_input)
+    _validate_executor_or_die(review_input)
+
+    orchestrator = ReviewOrchestrator(_repo_root())
+    summary = orchestrator.run(review_input, output_dir)
+    run_dir = Path(summary.output_dir)
+
+    if save_generated_input:
+        (run_dir / "generated_input.json").write_text(
+            json.dumps(generated_input, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    console.print(f"run_id: {summary.run_id}")
+    console.print(f"status: {summary.status.value}")
+    console.print(f"output: {summary.output_dir}")
+    if summary.qa_issues:
+        console.print("qa_issues:")
+        for item in summary.qa_issues:
+            console.print(f"- {item}")
+    if ai_summary:
+        payload = _build_ai_summary_payload(summary, run_dir)
+        summary_path = run_dir / "ai_summary.json"
+        summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"ai_summary: {summary_path}")
+    if strict_quality:
+        _apply_strict_quality_gate(summary, run_dir)
 
 
 @app.command("tool-venue-profile")
